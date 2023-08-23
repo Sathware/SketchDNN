@@ -387,9 +387,3 @@ class SketchDataset(Dataset):
     def get(self, idx):
         data = torch.load(os.path.join(self.processed_dir, f'data_{idx}.pt'))
         return data
-
-
-# %%
-dataset = SketchDataset(root="data/")
-
-
