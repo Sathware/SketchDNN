@@ -1,7 +1,6 @@
 # %%
 import os.path
 import torch
-%matplotlib inline
 from matplotlib import pyplot as plt
 import numpy as np
 from torch_geometric.data import Dataset, download_url, Data
