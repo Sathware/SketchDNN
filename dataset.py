@@ -1,6 +1,7 @@
 # %%
 import os.path
 import torch
+%matplotlib inline
 from matplotlib import pyplot as plt
 import numpy as np
 from torch_geometric.data import Dataset, download_url, Data
@@ -34,11 +35,11 @@ class SketchDataset(Dataset):
     
     @property
     def num_node_features(self):
-        return 19
+        return 20
     
     @property
     def num_edge_features(self):
-        return 14
+        return 17
     
     def download(self):
         path = download_url(url = "https://sketchgraphs.cs.princeton.edu/sequence/sg_all.npy", 
@@ -56,10 +57,11 @@ class SketchDataset(Dataset):
         for i in range(len(sequences)):
             if idx % 10000 == 0:
                 print("Saved Graphs: ", idx, "\t", "Processed Sketches: ", (100*i+100)/len(sequences), "%")
+            
             seq = sequences[i]
             sketch = datalib.sketch_from_sequence(seq)
-            # Filter out sketches with less than 6 primitives or more than 208 constraints
-            if len(sketch.entities) < 7 or len(sketch.constraints) > 208:
+            # Filter out sketches with less than 7 primitives or more than 24 primitives or more than 208 constraints
+            if len(sketch.entities) < 7 or len(sketch.entities) > 24 or len(sketch.constraints) > 208:
                 continue
             
             node_features, adjacency_list, edge_features = SketchDataset.sketch_to_graph(sketch)
@@ -387,5 +389,8 @@ class SketchDataset(Dataset):
         data = torch.load(os.path.join(self.processed_dir, f'data_{idx}.pt'))
         return data
 
+
+# %%
+dataset = SketchDataset(root="data/")
 
 
