@@ -66,7 +66,7 @@ class SketchDataset(Dataset):
                 continue
             
             node_features, adjacency_list, edge_features = SketchDataset.sketch_to_graph(sketch)
-            node_features, adjacency_list = SketchDataset.sort_graph(node_features, adjacency_list)
+            # node_features, adjacency_list = SketchDataset.sort_graph(node_features, adjacency_list)
             data = Data(x = node_features, edge_index = adjacency_list, edge_attr = edge_features)
             torch.save(data, os.path.join("../", self.processed_dir, f'data_{idx}.pt'))
             idx += 1
@@ -380,6 +380,8 @@ class SketchDataset(Dataset):
     
     def get(self, idx):
         data = torch.load(os.path.join(self.processed_dir, f'data_{idx}.pt'))
+        if self.transform != None:
+            return self.transform(data)
         return data
 
 
