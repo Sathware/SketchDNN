@@ -1,11 +1,12 @@
 # %%
 import os.path
+import glob
 import torch
 from matplotlib import pyplot as plt
 import numpy as np
 from torch_geometric.data import Dataset, download_url, Data
 import torch_geometric.utils as pygutils
-from config import NODE_FEATURE_DIMENSION, EDGE_FEATURE_DIMENSION, MAX_NUM_PRIMITIVES, MAX_NUM_CONSTRAINTS
+from config import NODE_FEATURE_DIMENSION, EDGE_FEATURE_DIMENSION, MAX_NUM_PRIMITIVES, MAX_NUM_CONSTRAINTS, NUM_PRIMITIVE_TYPES
 # You have to import sketchgraphs this way otherwise you get type errors
 os.chdir('SketchGraphs/')
 import sketchgraphs.data as datalib
@@ -18,8 +19,23 @@ os.chdir('../')
 import math
 
 # %%
+def transform(data : Data):
+    # Pad node feature matrix to have maximum 24 nodes
+    x = data.x.to_dense()
+    nodes = torch.zeros(size = (MAX_NUM_PRIMITIVES, NODE_FEATURE_DIMENSION))
+    num_primitives = len(x)
+    nodes[:num_primitives] = x
+    nodes[num_primitives:] = torch.tensor([0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0])
+    # Convert sparse edge feature tensor to dense tensor
+    edges = torch.sparse_coo_tensor(data.edge_index, data.edge_attr, (24, 24, 17)).to_dense()
+    edges[torch.abs(edges).sum(dim = 2) == 0] = torch.Tensor([0,0,0,1,0,0,0,1,0,0,0,0,0,0,0,0,1])
+    # Convert sparse node parameter mask to dense tensor
+    node_params_mask = data.node_params_mask.to_dense()
+    return nodes, edges, node_params_mask
+
+# %%
 class SketchDataset(Dataset):
-    def __init__(self, root, transform = None, pre_transform = None, pre_filter = None):
+    def __init__(self, root, transform = transform, pre_transform = None, pre_filter = None):
         super().__init__(root, transform, pre_transform, pre_filter)
 
     @property
@@ -30,7 +46,7 @@ class SketchDataset(Dataset):
     def processed_file_names(self):
         # Make processed fir if not already exist
         if os.path.exists(self.processed_dir):
-            return os.listdir(self.processed_dir)
+            return glob.glob(self.processed_dir + "/data*.pt")
         else:
             return []
     
@@ -55,8 +71,8 @@ class SketchDataset(Dataset):
         seq_data = flat_array.load_dictionary_flat(os.path.join("../", self.raw_paths[0]))
         sequences = seq_data["sequences"]
         idx = 0
-        for i in range(len(sequences)):
-            if idx % 10000 == 0:
+        for i in range(8): # len(sequences)
+            if idx % 1 == 0:
                 print("Saved Graphs: ", idx, "\t", "Processed Sketches: ", (100*i+100)/len(sequences), "%")
             
             seq = sequences[i]
@@ -64,10 +80,13 @@ class SketchDataset(Dataset):
             # Filter out sketches with less than 7 primitives or more than 24 primitives or more than 208 constraints
             if len(sketch.entities) < 7 or len(sketch.entities) > 24 or len(sketch.constraints) > 208:
                 continue
-            
+            # Construct Data Object containing graph
             node_features, adjacency_list, edge_features = SketchDataset.sketch_to_graph(sketch)
-            # node_features, adjacency_list = SketchDataset.sort_graph(node_features, adjacency_list)
-            data = Data(x = node_features, edge_index = adjacency_list, edge_attr = edge_features)
+            data = Data(x = node_features.to_sparse(), edge_index = adjacency_list, edge_attr = edge_features)
+            # Add additional node parameter mask for training
+            node_params_mask = SketchDataset.params_mask(node_features)
+            data.node_params_mask = node_params_mask.to_sparse()
+
             torch.save(data, os.path.join("../", self.processed_dir, f'data_{idx}.pt'))
             idx += 1
         # Change dir back
@@ -318,6 +337,9 @@ class SketchDataset(Dataset):
                 case 7:
                     # Equal
                     constraintType = ConstraintType.Equal
+                case _:
+                    # None
+                    continue
             # Adjust reference parameter ids if necessary
             if constraintType == ConstraintType.Midpoint:
                 param_ids = ['local0', 'local1']
@@ -362,6 +384,27 @@ class SketchDataset(Dataset):
         return sketch
 
     @staticmethod
+    def params_mask(nodes):
+        mask = torch.zeros(size = (MAX_NUM_PRIMITIVES, NODE_FEATURE_DIMENSION - NUM_PRIMITIVE_TYPES - 1))
+        i = 0
+        for node in nodes:
+            match torch.argmax(node[1:6]):
+                case 0:
+                    # Line
+                    mask[i][0:4] = 1
+                case 1:
+                    # Circle
+                    mask[i][4:7] = 1
+                case 2:
+                    # Arc
+                    mask[i][7:12] = 1
+                case 3:
+                    # Point
+                    mask[i][12:] = 1
+            i = i + 1
+        return mask
+
+    @staticmethod
     def sort_graph(node_matrix, adjacency_list):
         # Helper variables
         num_nodes = len(node_matrix)
@@ -379,16 +422,4 @@ class SketchDataset(Dataset):
         return len(self.processed_file_names)
     
     def get(self, idx):
-        data = torch.load(os.path.join(self.processed_dir, f'data_{idx}.pt'))
-        if self.transform != None:
-            return self.transform(data)
-        return data
-
-
-# %%
-dataset = SketchDataset(root="data/")
-
-# %%
-dataset.len()
-
-
+        return torch.load(os.path.join(self.processed_dir, f'data_{idx}.pt'))
