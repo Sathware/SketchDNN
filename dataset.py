@@ -1,9 +1,12 @@
 # %%
 import os.path
+import glob
 import torch
 from matplotlib import pyplot as plt
 import numpy as np
 from torch_geometric.data import Dataset, download_url, Data
+import torch_geometric.utils as pygutils
+from config import NODE_FEATURE_DIMENSION, EDGE_FEATURE_DIMENSION, MAX_NUM_PRIMITIVES, MAX_NUM_CONSTRAINTS, NUM_PRIMITIVE_TYPES
 # You have to import sketchgraphs this way otherwise you get type errors
 os.chdir('SketchGraphs/')
 import sketchgraphs.data as datalib
@@ -16,8 +19,23 @@ os.chdir('../')
 import math
 
 # %%
+def transform(data : Data):
+    # Pad node feature matrix to have maximum 24 nodes
+    x = data.x.to_dense()
+    nodes = torch.zeros(size = (MAX_NUM_PRIMITIVES, NODE_FEATURE_DIMENSION))
+    num_primitives = len(x)
+    nodes[:num_primitives] = x
+    nodes[num_primitives:] = torch.tensor([0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0])
+    # Convert sparse edge feature tensor to dense tensor
+    edges = torch.sparse_coo_tensor(data.edge_index, data.edge_attr, (24, 24, 17)).to_dense()
+    edges[torch.abs(edges).sum(dim = 2) == 0] = torch.Tensor([0,0,0,1,0,0,0,1,0,0,0,0,0,0,0,0,1])
+    # Convert sparse node parameter mask to dense tensor
+    node_params_mask = data.node_params_mask.to_dense()
+    return nodes, edges, node_params_mask
+
+# %%
 class SketchDataset(Dataset):
-    def __init__(self, root, transform = None, pre_transform = None, pre_filter = None):
+    def __init__(self, root, transform = transform, pre_transform = None, pre_filter = None):
         super().__init__(root, transform, pre_transform, pre_filter)
 
     @property
@@ -26,11 +44,8 @@ class SketchDataset(Dataset):
     
     @property 
     def processed_file_names(self):
-        # Make processed fir if not already exist
-        if os.path.exists(self.processed_dir):
-            return os.listdir(self.processed_dir)
-        else:
-            return []
+        # Make processed dir if not already exist
+        return os.listdir(self.processed_dir) if os.path.exists(self.processed_dir) else []
     
     @property
     def num_node_features(self):
@@ -54,7 +69,7 @@ class SketchDataset(Dataset):
         sequences = seq_data["sequences"]
         idx = 0
         for i in range(len(sequences)):
-            if idx % 10000 == 0:
+            if idx % 1000 == 0:
                 print("Saved Graphs: ", idx, "\t", "Processed Sketches: ", (100*i+100)/len(sequences), "%")
             
             seq = sequences[i]
@@ -62,22 +77,22 @@ class SketchDataset(Dataset):
             # Filter out sketches with less than 7 primitives or more than 24 primitives or more than 208 constraints
             if len(sketch.entities) < 7 or len(sketch.entities) > 24 or len(sketch.constraints) > 208:
                 continue
-            
+            # Construct Data Object containing graph
             node_features, adjacency_list, edge_features = SketchDataset.sketch_to_graph(sketch)
-            node_features, adjacency_list = SketchDataset.sort_graph(node_features, adjacency_list)
-            data = Data(x = node_features, edge_index = adjacency_list, edge_attr = edge_features)
+            data = Data(x = node_features.to_sparse(), edge_index = adjacency_list, edge_attr = edge_features)
+            # Add additional node parameter mask for training
+            node_params_mask = SketchDataset.params_mask(node_features)
+            data.node_params_mask = node_params_mask.to_sparse()
+
             torch.save(data, os.path.join("../", self.processed_dir, f'data_{idx}.pt'))
             idx += 1
         # Change dir back
         os.chdir('../')
+        print("Saved Graphs: ", idx)
         
     @staticmethod
     def sketch_to_graph(sketch):
         # Setup output data structures
-        NODE_FEATURE_DIMENSION = 20;
-        EDGE_FEATURE_DIMENSION = 17;
-        MAX_NUM_PRIMITIVES = 24;
-        MAX_NUM_CONSTRAINTS = 208;
         num_nodes = len(sketch.entities)
         num_edges = len(sketch.constraints)
         # Node feature matrix
@@ -291,7 +306,7 @@ class SketchDataset(Dataset):
         for idx in range(len(edge_attr)):
             constraint = edge_attr[idx]
             identifier = "c_" + str(idx)
-            constraintType = None
+            constraintType = ConstraintType.Coincident # Initial Value
             param_ids = None
             params = []
             # Convert one hot encoding to constraint label
@@ -320,6 +335,9 @@ class SketchDataset(Dataset):
                 case 7:
                     # Equal
                     constraintType = ConstraintType.Equal
+                case _:
+                    # None
+                    continue
             # Adjust reference parameter ids if necessary
             if constraintType == ConstraintType.Midpoint:
                 param_ids = ['local0', 'local1']
@@ -331,11 +349,11 @@ class SketchDataset(Dataset):
                 node_ref = str(edge[0])
                 match torch.argmax(constraint[0:4]):
                     case 0:
-                        node_ref + ".start"
+                        node_ref = node_ref + ".start"
                     case 1:
-                        node_ref + ".center"
+                        node_ref = node_ref + ".center"
                     case 2:
-                        node_ref + ".end"
+                        node_ref = node_ref + ".end"
                 param1 = LocalReferenceParameter(param_ids[0], node_ref)
                 params.append(param1)
             else:
@@ -343,19 +361,19 @@ class SketchDataset(Dataset):
                 node_a_ref = str(edge[0])
                 match torch.argmax(constraint[0:4]):
                     case 0:
-                        node_a_ref + ".start"
+                        node_ref = node_a_ref + ".start"
                     case 1:
-                        node_a_ref + ".center"
+                        node_ref = node_a_ref + ".center"
                     case 2:
-                        node_a_ref + ".end"
+                        node_ref = node_a_ref + ".end"
                 node_b_ref = str(edge[1])
                 match torch.argmax(constraint[4:8]):
                     case 0:
-                        node_b_ref + ".start"
+                        node_ref = node_b_ref + ".start"
                     case 1:
-                        node_b_ref + ".center"
+                        node_ref = node_b_ref + ".center"
                     case 2:
-                        node_b_ref + ".end"
+                        node_ref = node_b_ref + ".end"
                 param1 = LocalReferenceParameter(param_ids[0], node_a_ref)
                 params.append(param1)
                 param2 = LocalReferenceParameter(param_ids[1], node_b_ref)
@@ -364,26 +382,198 @@ class SketchDataset(Dataset):
         return sketch
 
     @staticmethod
+    def preds_to_sketch(nodes, edges):
+        sketch = Sketch()
+        # Add entities
+        for idx in range(len(nodes)):
+            entity = nodes[idx]
+            match torch.argmax(entity[1:5]):
+                case 0:
+                    # Create Line
+                    id = str(idx + 1)
+                    isConstructible = bool(entity[0])
+                    pnt = entity[6:8]
+                    startParam = 0
+                    dir = (entity[8:10] - entity[6:8]) / torch.linalg.vector_norm(entity[8:10] - entity[6:8])
+                    endParam = torch.linalg.vector_norm(entity[8:10] - entity[6:8])
+                    line = Line(entityId = id,
+                                isConstruction = isConstructible, 
+                                pntX = pnt[0], 
+                                pntY = pnt[1], 
+                                dirX = dir[0], 
+                                dirY = dir[1], 
+                                startParam = startParam, 
+                                endParam = endParam
+                               );
+                    sketch.entities[id] = line
+                case 1:
+                    # Create Circle
+                    id = str(idx + 1)
+                    isConstructible = bool(entity[0])
+                    center = entity[10:12]
+                    radius = entity[12]
+                    circle = Circle(entityId = id, 
+                                  isConstruction = isConstructible, 
+                                  xCenter = center[0], 
+                                  yCenter = center[1], 
+                                  xDir = 1, 
+                                  yDir = 0, 
+                                  radius = radius, 
+                                  clockwise = False
+                                 );
+                    sketch.entities[id] = circle
+                case 2: 
+                    # Create Arc
+                    id = str(idx + 1)
+                    isConstructible = bool(entity[0])
+                    center = entity[13:15]
+                    radius = entity[15]
+                    startParam = entity[16] * (2*math.pi)
+                    endParam = entity[17] * (2*math.pi)
+                    arc = Arc(entityId = id, 
+                              isConstruction = isConstructible, 
+                              xCenter = center[0], 
+                              yCenter = center[1], 
+                              xDir = 1, 
+                              yDir = 0,
+                              radius = radius, 
+                              startParam = startParam,
+                              endParam = endParam, 
+                              clockwise = False
+                             );
+                    sketch.entities[id] = arc
+                case 3:
+                    # Create Point
+                    id = str(idx + 1)
+                    isConstructible = bool(entity[0])
+                    x = entity[18]
+                    y = entity[19]
+                    point = Point(entityId = id, 
+                                  isConstruction = isConstructible,
+                                  x = x,
+                                  y = y
+                                 );
+                    sketch.entities[id] = point
+
+        # Add constraints
+        idx = 0
+        for i in range(edges.size(0)):
+            for j in range(edges.size(1)):
+                constraint = edges[i][j]
+                identifier = "c_" + str(idx)
+                constraintType = ConstraintType.Coincident # Initial Value
+                param_ids = None
+                params = []
+                # Convert one hot encoding to constraint label
+                match torch.argmax(constraint[8:17]):
+                    case 0:
+                        # Coincident
+                        constraintType = ConstraintType.Coincident
+                    case 1:
+                        # Horizontal
+                        constraintType = ConstraintType.Horizontal
+                    case 2:
+                        # Vertical
+                        constraintType = ConstraintType.Vertical
+                    case 3:
+                        # Parallel
+                        constraintType = ConstraintType.Parallel
+                    case 4:
+                        # Perpendicular
+                        constraintType = ConstraintType.Perpendicular
+                    case 5:
+                        # Tangent
+                        constraintType = ConstraintType.Tangent
+                    case 6:
+                        # Midpoint
+                        constraintType = ConstraintType.Midpoint
+                    case 7:
+                        # Equal
+                        constraintType = ConstraintType.Equal
+                    case _:
+                        # None
+                        continue
+                # Adjust reference parameter ids if necessary
+                if constraintType == ConstraintType.Midpoint:
+                    param_ids = ['local0', 'local1']
+                else:
+                    param_ids = ['localFirst', 'localSecond']
+                edge = torch.Tensor([i, j])
+                if torch.equal(edge[0], edge[1]):
+                    # Constraint only applies to single entity
+                    node_ref = str(edge[0])
+                    match torch.argmax(constraint[0:4]):
+                        case 0:
+                            node_ref = node_ref + ".start"
+                        case 1:
+                            node_ref = node_ref + ".center"
+                        case 2:
+                            node_ref = node_ref + ".end"
+                    param1 = LocalReferenceParameter(param_ids[0], node_ref)
+                    params.append(param1)
+                else:
+                    # Constraint applies to 2 primitives
+                    node_a_ref = str(edge[0])
+                    match torch.argmax(constraint[0:4]):
+                        case 0:
+                            node_ref = node_a_ref + ".start"
+                        case 1:
+                            node_ref = node_a_ref + ".center"
+                        case 2:
+                            node_ref = node_a_ref + ".end"
+                    node_b_ref = str(edge[1])
+                    match torch.argmax(constraint[4:8]):
+                        case 0:
+                            node_ref = node_b_ref + ".start"
+                        case 1:
+                            node_ref = node_b_ref + ".center"
+                        case 2:
+                            node_ref = node_b_ref + ".end"
+                    param1 = LocalReferenceParameter(param_ids[0], node_a_ref)
+                    params.append(param1)
+                    param2 = LocalReferenceParameter(param_ids[1], node_b_ref)
+                    params.append(param2)
+                sketch.constraints[identifier] = Constraint(identifier, constraintType, params)
+        return sketch
+    
+    @staticmethod
+    def params_mask(nodes):
+        mask = torch.zeros(size = (MAX_NUM_PRIMITIVES, NODE_FEATURE_DIMENSION - NUM_PRIMITIVE_TYPES - 1))
+        i = 0
+        for node in nodes:
+            match torch.argmax(node[1:6]):
+                case 0:
+                    # Line
+                    mask[i][0:4] = 1
+                case 1:
+                    # Circle
+                    mask[i][4:7] = 1
+                case 2:
+                    # Arc
+                    mask[i][7:12] = 1
+                case 3:
+                    # Point
+                    mask[i][12:] = 1
+            i = i + 1
+        return mask
+
+    @staticmethod
     def sort_graph(node_matrix, adjacency_list):
-        # Retrieve primtive types
-        node_classes = node_matrix[:,[1,2,3,4,5]]
-        labels = torch.argmax(node_classes, dim = 1)
-        # Retrieve what primitives are constructible
-        node_constructible = node_matrix[:,0]
-        # Hash primitives based on their type and whether they are constructible or not
-        node_hashes = labels * 10 + node_constructible
-        node_idx_to_hash = {i:x for i,x in enumerate(node_hashes)}
-        # Sort by the computed hashes
-        node_permutation_indices = sorted(node_idx_to_hash, key = node_idx_to_hash.get)
+        # Helper variables
+        num_nodes = len(node_matrix)
+        node_out_degrees = pygutils.degree(adjacency_list.long()[0], num_nodes)
+        # Generate permutation indices to sort graph
+        indices = range(num_nodes)
+        node_permutation_indices = sorted(  indices, key = lambda idx: (  node_matrix[idx].tolist() + [node_out_degrees[idx]]  )  )
         # return sorted node feature matrix and adjacency list
         sorted_node_matrix = node_matrix[node_permutation_indices]
         node_oldidx_to_newidx = [node_permutation_indices.index(value) for value in range(len(node_permutation_indices))]
-        updated_adjacency_list = torch.Tensor(node_oldidx_to_newidx)[adjacency_list.int()]
+        updated_adjacency_list = torch.Tensor(node_oldidx_to_newidx)[adjacency_list.long()]
         return sorted_node_matrix, updated_adjacency_list
     
     def len(self):
-        return len(self.processed_file_names)
+        # The minus two is there because pre_transform.pt and pre_filter.pt are also included in processed_file_names
+        return len(self.processed_file_names) - 2
     
     def get(self, idx):
-        data = torch.load(os.path.join(self.processed_dir, f'data_{idx}.pt'))
-        return data
+        return torch.load(os.path.join(self.processed_dir, f'data_{idx}.pt'))
