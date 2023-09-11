@@ -3,3 +3,8 @@ data/raw/sg_all.npy:Zone.Identifier
 data/
 __pycache__/config.cpython-311.pyc
 __pycache__/dataset.cpython-311.pyc
+best_model_checkpoint.pth
+__pycache__/loss.cpython-311.pyc
+.gitignore
+runs/gvae_experiment_1/events.out.tfevents.1694392056.DevSathwarePC.685.0
+__pycache__/model.cpython-311.pyc

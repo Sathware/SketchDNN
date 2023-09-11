@@ -1,9 +1,8 @@
 # %%
 import os.path
-import glob
 import torch
-from matplotlib import pyplot as plt
-import numpy as np
+from tqdm import tqdm
+import math
 from torch_geometric.data import Dataset, download_url, Data
 import torch_geometric.utils as pygutils
 from config import NODE_FEATURE_DIMENSION, EDGE_FEATURE_DIMENSION, MAX_NUM_PRIMITIVES, MAX_NUM_CONSTRAINTS, NUM_PRIMITIVE_TYPES
@@ -15,8 +14,6 @@ from sketchgraphs.data._entity import Point, Line, Circle, Arc, EntityType
 from sketchgraphs.data.sketch import Sketch
 from sketchgraphs.data._constraint import *
 os.chdir('../')
-
-import math
 
 # %%
 def transform(data : Data):
@@ -45,7 +42,10 @@ class SketchDataset(Dataset):
     @property 
     def processed_file_names(self):
         # Make processed dir if not already exist
-        return os.listdir(self.processed_dir) if os.path.exists(self.processed_dir) else []
+        if os.path.exists(self.processed_dir):
+            return os.listdir(self.processed_dir)  
+        else:
+            return []
     
     @property
     def num_node_features(self):
@@ -68,7 +68,7 @@ class SketchDataset(Dataset):
         seq_data = flat_array.load_dictionary_flat(os.path.join("../", self.raw_paths[0]))
         sequences = seq_data["sequences"]
         idx = 0
-        for i in range(len(sequences)):
+        for i in tqdm(range(len(sequences))):
             if idx % 1000 == 0:
                 print("Saved Graphs: ", idx, "\t", "Processed Sketches: ", (100*i+100)/len(sequences), "%")
             
@@ -387,7 +387,7 @@ class SketchDataset(Dataset):
         # Add entities
         for idx in range(len(nodes)):
             entity = nodes[idx]
-            match torch.argmax(entity[1:5]):
+            match torch.argmax(entity[1:6]):
                 case 0:
                     # Create Line
                     id = str(idx + 1)
@@ -454,6 +454,8 @@ class SketchDataset(Dataset):
                                   y = y
                                  );
                     sketch.entities[id] = point
+                case _:
+                    continue
 
         # Add constraints
         idx = 0
@@ -534,6 +536,7 @@ class SketchDataset(Dataset):
                     param2 = LocalReferenceParameter(param_ids[1], node_b_ref)
                     params.append(param2)
                 sketch.constraints[identifier] = Constraint(identifier, constraintType, params)
+                idx = idx + 1
         return sketch
     
     @staticmethod
@@ -577,3 +580,5 @@ class SketchDataset(Dataset):
     
     def get(self, idx):
         return torch.load(os.path.join(self.processed_dir, f'data_{idx}.pt'))
+
+
