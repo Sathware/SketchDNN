@@ -18,13 +18,13 @@ os.chdir('../')
 # %%
 def transform(data : Data):
     # Pad node feature matrix to have maximum 24 nodes
-    x = data.x.to_dense()
+    x = data.nodes.to_dense()
     nodes = torch.zeros(size = (MAX_NUM_PRIMITIVES, NODE_FEATURE_DIMENSION))
     num_primitives = len(x)
     nodes[:num_primitives] = x
     nodes[num_primitives:] = torch.tensor([0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0])
     # Convert sparse edge feature tensor to dense tensor
-    edges = torch.sparse_coo_tensor(data.edge_index, data.edge_attr, (24, 24, 17)).to_dense()
+    edges = data.edges.to_dense()
     edges[torch.abs(edges).sum(dim = 2) == 0] = torch.Tensor([0,0,0,1,0,0,0,1,0,0,0,0,0,0,0,0,1])
     # Convert sparse node parameter mask to dense tensor
     node_params_mask = data.node_params_mask.to_dense()
@@ -43,7 +43,7 @@ class SketchDataset(Dataset):
     def processed_file_names(self):
         # Make processed dir if not already exist
         if os.path.exists(self.processed_dir):
-            return os.listdir(self.processed_dir)  
+            return ["data_4461654.pt"] # Check if last saved graph is present
         else:
             return []
     
@@ -69,9 +69,6 @@ class SketchDataset(Dataset):
         sequences = seq_data["sequences"]
         idx = 0
         for i in tqdm(range(len(sequences))):
-            if idx % 1000 == 0:
-                print("Saved Graphs: ", idx, "\t", "Processed Sketches: ", (100*i+100)/len(sequences), "%")
-            
             seq = sequences[i]
             sketch = datalib.sketch_from_sequence(seq)
             # Filter out sketches with less than 7 primitives or more than 24 primitives or more than 208 constraints
@@ -79,9 +76,14 @@ class SketchDataset(Dataset):
                 continue
             # Construct Data Object containing graph
             node_features, adjacency_list, edge_features = SketchDataset.sketch_to_graph(sketch)
-            data = Data(x = node_features.to_sparse(), edge_index = adjacency_list, edge_attr = edge_features)
-            # Add additional node parameter mask for training
             node_params_mask = SketchDataset.params_mask(node_features)
+            data = Data()
+
+            # data = Data(x = node_features.to_sparse(), edge_index = adjacency_list, edge_attr = edge_features)
+            # Add arguments to data
+            
+            data.nodes = node_features.to_sparse()
+            data.edges = torch.sparse_coo_tensor(adjacency_list, edge_features, (24, 24, 17))
             data.node_params_mask = node_params_mask.to_sparse()
 
             torch.save(data, os.path.join("../", self.processed_dir, f'data_{idx}.pt'))
@@ -576,7 +578,7 @@ class SketchDataset(Dataset):
     
     def len(self):
         # The minus two is there because pre_transform.pt and pre_filter.pt are also included in processed_file_names
-        return len(self.processed_file_names) - 3
+        return 4461655
     
     def get(self, idx):
         return torch.load(os.path.join(self.processed_dir, f'data_{idx}.pt'))
