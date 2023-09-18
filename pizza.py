@@ -43,7 +43,7 @@ class SketchDataset(Dataset):
     def processed_file_names(self):
         # Make processed dir if not already exist
         if os.path.exists(self.processed_dir):
-            return os.listdir(self.processed_dir)  
+            return ['data_4461654.pt']
         else:
             return []
     
@@ -58,7 +58,7 @@ class SketchDataset(Dataset):
     def download(self):
         path = download_url(url = "https://sketchgraphs.cs.princeton.edu/sequence/sg_all.npy", 
                             folder = self.raw_dir
-                           );
+                           )
         # print("Downloaded SketchGraphs dataset to " + path)
 
     def process(self):
@@ -576,7 +576,7 @@ class SketchDataset(Dataset):
     
     def len(self):
         # The minus two is there because pre_transform.pt and pre_filter.pt are also included in processed_file_names
-        return len(self.processed_file_names) - 3
+        return 4461655
     
     def get(self, idx):
         return torch.load(os.path.join(self.processed_dir, f'data_{idx}.pt'))
