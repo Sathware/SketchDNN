@@ -1,4 +1,9 @@
-# %%
+#!/usr/bin/env python
+# coding: utf-8
+
+# In[5]:
+
+
 import os.path
 import torch
 from tqdm import tqdm
@@ -15,7 +20,10 @@ from sketchgraphs.data.sketch import Sketch
 from sketchgraphs.data._constraint import *
 os.chdir('../')
 
-# %%
+
+# In[6]:
+
+
 def transform(data : Data):
     # Pad node feature matrix to have maximum 24 nodes
     x = data.nodes.to_dense()
@@ -30,11 +38,14 @@ def transform(data : Data):
     node_params_mask = data.node_params_mask.to_dense()
     return nodes, edges, node_params_mask
 
-# %%
+
+# In[17]:
+
+
 class SketchDataset(Dataset):
     def __init__(self, root, transform = transform, pre_transform = None, pre_filter = None):
         super().__init__(root, transform, pre_transform, pre_filter)
-
+        
     @property
     def raw_file_names(self):
         return ['sg_all.npy']
@@ -43,7 +54,7 @@ class SketchDataset(Dataset):
     def processed_file_names(self):
         # Make processed dir if not already exist
         if os.path.exists(self.processed_dir):
-            return ["data_4461654.pt"] # Check if last saved graph is present
+            return ["finished_processing"] # Check if the file 'finished_processing' is present in processed dir
         else:
             return []
     
@@ -71,24 +82,45 @@ class SketchDataset(Dataset):
         for i in tqdm(range(len(sequences))):
             seq = sequences[i]
             sketch = datalib.sketch_from_sequence(seq)
-            # Filter out sketches with less than 7 primitives or more than 24 primitives or more than 208 constraints
-            if len(sketch.entities) < 7 or len(sketch.entities) > 24 or len(sketch.constraints) > 208:
+            # Filter out sketches with less than 7 or more than 24 primitives
+            # or less constraints than primitives or more than 208 constraints
+            if len(sketch.entities) < 7 or len(sketch.entities) > 24 or len(sketch.constraints) < len(sketch.entities) or len(sketch.constraints) > 208:
                 continue
             # Construct Data Object containing graph
             node_features, adjacency_list, edge_features = SketchDataset.sketch_to_graph(sketch)
             node_params_mask = SketchDataset.params_mask(node_features)
             data = Data()
-
+            
+            # Normalize node paramter values (except arc startParam and endParam) to be in range [-10, 10]
+            val_indices = [6,7,8,9,10,11,12,13,14,15,18,19]
+            node_features[:,val_indices] = node_features[:,val_indices] * 10 / torch.max(torch.abs(node_features[:,val_indices]))
+            
+            if (node_features.isnan().any()):
+                continue
+                #raise ValueError("node_features contain a nan!")
+            if (adjacency_list.isnan().any()):
+                continue
+                #raise ValueError("adjacency_list contain a nan!")
+            if (edge_features.isnan().any()):
+                continue
+                #raise ValueError("edge_features contain a nan!")
+            if (node_params_mask.isnan().any()):
+                continue
+                #raise ValueError("node_params_mask contain a nan!")
+            
             # data = Data(x = node_features.to_sparse(), edge_index = adjacency_list, edge_attr = edge_features)
             # Add arguments to data
             
             data.nodes = node_features.to_sparse()
             data.edges = torch.sparse_coo_tensor(adjacency_list, edge_features, (24, 24, 17))
             data.node_params_mask = node_params_mask.to_sparse()
-
-            torch.save(data, os.path.join("../", self.processed_dir, f'data_{idx}.pt'))
+            # For whatever reason there is a limit of ~3 million files/sub directories per directory on my university's nfs share, 
+            # so ~4.4 million data files are partitioned into ~88 subdirectories containing atmost 50,000 data files each
+            os.makedirs( name = os.path.join("../", self.processed_dir, f'{int(idx / 50000)}'), exist_ok = True )
+            torch.save(data, os.path.join("../", self.processed_dir, f'{int(idx / 50000)}/data_{idx}.pt'))
             idx += 1
-        # Change dir back
+        # Save file flag and Change dir back
+        open(os.path.join("../", self.processed_dir, 'finished_processing'), 'a').close()
         os.chdir('../')
         print("Saved Graphs: ", idx)
         
@@ -578,9 +610,12 @@ class SketchDataset(Dataset):
     
     def len(self):
         # The minus two is there because pre_transform.pt and pre_filter.pt are also included in processed_file_names
-        return 4461655
+        return 4008985
     
     def get(self, idx):
-        return torch.load(os.path.join(self.processed_dir, f'data_{idx}.pt'))
+        # For whatever reason there is a limit of ~3 million files/sub directories per directory on my university's nfs share, 
+        # so ~4.4 million data files are partitioned into ~88 subdirectories containing atmost 50,000 data files each
+        
+        return torch.load(os.path.join(self.processed_dir, f'{int(idx / 50000)}/data_{idx}.pt'))
 
 
