@@ -6,7 +6,7 @@ from config import NUM_PRIMITIVE_TYPES, MAX_NUM_PRIMITIVES, NODE_FEATURE_DIMENSI
 
 def reconstruction_loss(pred_nodes : Tensor, pred_edges : Tensor, target_nodes : Tensor, target_edges : Tensor):    
     #print("sub a", sub_a_cross_entropy, "sub b", sub_b_cross_entropy, "constr", constraint_cross_entropy)
-    return node_loss(pred_nodes, target_nodes) + 0.1 * edge_loss(pred_edges, target_edges)
+    return node_loss(pred_nodes, target_nodes) #+ 0.1 * edge_loss(pred_edges, target_edges)
 
 def kl_loss(means : Tensor, logvars : Tensor):
     # MAX_LOGVAR = 20
@@ -18,7 +18,7 @@ def kl_loss(means : Tensor, logvars : Tensor):
 
 def node_loss(pred_nodes : Tensor, target_nodes : Tensor) -> Tensor:
     '''Node Loss'''
-    weight = torch.tensor([1.0, 7.0, 7.0, 1.0, 0.1]).to(pred_nodes.device)  # Weight circles, arcs, and points higher since they are much rarer than line and none types
+    weight = torch.tensor([1.0, 4.0, 4.0, 3.0, 0.1]).to(pred_nodes.device)  # Weight circles, arcs, and points higher since they are much rarer than line and none types
     primitive_type_labels = torch.argmax(target_nodes[:,:,1:6], dim = 2)    # batch_size x num_nodes (class index for each node)
     primitive_type_logits = pred_nodes[:,:,1:6].permute(0,2,1).contiguous() # batch_size x num_primitive_types x num_nodes
     
@@ -40,7 +40,7 @@ def node_loss(pred_nodes : Tensor, target_nodes : Tensor) -> Tensor:
                      reduction='mean')
 
     # Total node loss
-    node_loss = bce + node_cross + mse
+    node_loss = bce + node_cross #+ 16 * mse
     
     return node_loss
 

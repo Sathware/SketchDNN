@@ -12,7 +12,7 @@ from config import NODE_FEATURE_DIMENSION, EDGE_FEATURE_DIMENSION, MAX_NUM_PRIMI
 class GVAE(nn.Module):
     def __init__(self, device : torch.device):
         super().__init__()
-        self.graph_emb_dim = 768
+        self.graph_emb_dim = 1024
         self.device = device
 
         self.encoder = TransformerEncoder(node_dim = NODE_FEATURE_DIMENSION, 
@@ -144,9 +144,9 @@ class TransformerDecoder(nn.Module):
         self.num_tf_layers = num_tf_layers
         self.num_heads = num_heads
 
-        self.mlp_create_nodes = nn.Sequential(nn.Linear(in_features = self.graph_emb_dim, out_features = 4 * self.mlp_in_node_dim, device = device),
+        self.mlp_create_nodes = nn.Sequential(nn.Linear(in_features = self.graph_emb_dim, out_features = MAX_NUM_PRIMITIVES * self.mlp_in_node_dim, device = device),
                                               nn.ReLU(),
-                                              nn.Linear(in_features = 4 * self.mlp_in_node_dim, out_features = MAX_NUM_PRIMITIVES * self.mlp_out_node_dim, device = device),
+                                              nn.Linear(in_features = MAX_NUM_PRIMITIVES * self.mlp_in_node_dim, out_features = MAX_NUM_PRIMITIVES * self.mlp_out_node_dim, device = device),
                                               nn.ReLU()
                                              )
         
@@ -227,20 +227,18 @@ class TransformerLayer(nn.Module):
         # self.lnorm1_nodes = nn.LayerNorm(normalized_shape = self.out_node_dim, device = device)
         # self.lnorm1_edges = nn.LayerNorm(normalized_shape = self.out_edge_dim, device = device)
 
-        self.mlp_out_nodes = nn.Sequential(nn.Linear(in_features = self.out_node_dim, out_features = self.out_node_dim, device = device),
+        self.mlp_dropout_nodes = nn.Sequential(nn.Linear(in_features = self.out_node_dim, out_features = self.out_node_dim, device = device),
                                                nn.ReLU(),
                                                #nn.Dropout(p = 0.1),
                                                nn.Linear(in_features = self.out_node_dim, out_features = self.out_node_dim, device = device),
-                                               nn.ReLU()
                                                #nn.Dropout(p = 0.1)
                                               )
         #self.lnorm2_nodes = nn.LayerNorm(normalized_shape = self.out_node_dim, device = device)
         
-        self.mlp_out_edges = nn.Sequential(nn.Linear(in_features = self.out_edge_dim, out_features = self.out_edge_dim, device = device),
+        self.mlp_dropout_edges = nn.Sequential(nn.Linear(in_features = self.out_edge_dim, out_features = self.out_edge_dim, device = device),
                                                nn.ReLU(),
                                                #nn.Dropout(p = 0.1),
                                                nn.Linear(in_features = self.out_edge_dim, out_features = self.out_edge_dim, device = device),
-                                               nn.ReLU()
                                                #nn.Dropout(p = 0.1)
                                               )
         #self.lnorm2_edges = nn.LayerNorm(normalized_shape = self.out_edge_dim, device = device)
@@ -271,8 +269,8 @@ class TransformerLayer(nn.Module):
         new_edges = F.relu(new_edges)
 
         # Transform into output nodes and edges
-        new_nodes = self.mlp_out_nodes(new_nodes) # batch_size x num_nodes x out_node_dim
-        new_edges = self.mlp_out_edges(new_edges) # batch_size x num_nodes x num_nodes x out_edge_dim
+        new_nodes = self.mlp_dropout_nodes(new_nodes) # batch_size x num_nodes x out_node_dim
+        new_edges = self.mlp_dropout_edges(new_edges) # batch_size x num_nodes x num_nodes x out_edge_dim
 
         #new_nodes = self.lnorm2_nodes(temp_new_nodes + new_nodes)
         #new_edges = self.lnorm2_edges(temp_new_edges + new_edges)
