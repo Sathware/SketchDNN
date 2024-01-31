@@ -18,7 +18,7 @@ def kl_loss(means : Tensor, logvars : Tensor):
 
 def node_loss(pred_nodes : Tensor, target_nodes : Tensor) -> Tensor:
     '''Node Loss'''
-    weight = torch.tensor([1.0, 7.0, 7.0, 1.0, 0.1]).to(pred_nodes.device)  # Weight circles, arcs, and points higher since they are much rarer than line and none types
+    weight = torch.tensor([1.0, 2.0, 2.0, 1.0, 0.1]).to(pred_nodes.device)  # Weight circles, arcs, and points higher since they are much rarer than line and none types
     primitive_type_labels = torch.argmax(target_nodes[:,:,1:6], dim = 2)    # batch_size x num_nodes (class index for each node)
     primitive_type_logits = pred_nodes[:,:,1:6].permute(0,2,1).contiguous() # batch_size x num_primitive_types x num_nodes
     

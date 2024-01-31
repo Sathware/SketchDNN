@@ -36,8 +36,8 @@ class SketchDataset(Dataset):
         if not isProcessed:
             self.process()
         
-        self.nodes = torch.load(os.path.join(self.processed_dir, 'nodes.pt'))
-        self.edges = torch.load(os.path.join(self.processed_dir, 'edges.pt'))
+        #self.nodes = torch.load(os.path.join(self.processed_dir, 'nodes.pt'))
+        #self.edges = torch.load(os.path.join(self.processed_dir, 'edges.pt'))
         
     @property
     def raw_file_names(self):
