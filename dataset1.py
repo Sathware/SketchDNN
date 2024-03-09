@@ -4,7 +4,10 @@ import torch
 from torch.utils.data import Dataset
 import numpy
 from tqdm import tqdm
+from tqdm import trange
+import multiprocessing
 import math
+import itertools
 from torch_geometric.data import download_url
 import torch_geometric.utils as pygutils
 from config import NODE_FEATURE_DIMENSION, EDGE_FEATURE_DIMENSION, MAX_NUM_PRIMITIVES, MAX_NUM_CONSTRAINTS, NUM_PRIMITIVE_TYPES
@@ -18,16 +21,35 @@ from sketchgraphs.data._constraint import *
 os.chdir('../')
 
 # %%
+def transform(data):
+    # Pad node feature matrix to have maximum 24 nodes
+    # x = data.nodes.to_dense()
+    # nodes = torch.zeros(size = (MAX_NUM_PRIMITIVES, NODE_FEATURE_DIMENSION))
+    # num_primitives = len(x)
+    # nodes[:num_primitives] = x
+    # nodes[num_primitives:] = torch.tensor([0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0])
+    # Convert sparse edge feature tensor to dense tensor
+    # edges = data.edges.to_dense()
+    # edges[torch.abs(edges).sum(dim = 2) == 0] = torch.Tensor([0,0,0,1,0,0,0,1,0,0,0,0,0,0,0,0,1])
+    # Convert sparse node parameter mask to dense tensor
+    # node_params_mask = data.node_params_mask.to_dense()
+    return data[0], data[1], SketchDataset.params_mask(data[0])
+
+# %%
 class SketchDataset(Dataset):
     def __init__(self, root):
         self.raw_dir = os.path.join(root, "raw/")
         self.processed_dir = os.path.join(root, "processed/")
         
-        if not os.path.exists(os.path.join(self.raw_dir, 'sg_all.npy')):
+        if not os.path.exists(os.path.join(self.raw_dir, 'sg_t16_train.npy')):
+            self.download()
+        if not os.path.exists(os.path.join(self.raw_dir, 'sg_t16_validation.npy')):
+            self.download()
+        if not os.path.exists(os.path.join(self.raw_dir, 'sg_t16_test.npy')):
             self.download()
             
-        nodes_file_path = os.path.join(self.processed_dir, "nodes.pt")
-        edges_file_path = os.path.join(self.processed_dir, "edges.pt")
+        nodes_file_path = os.path.join(self.processed_dir, "nodes1.pt")
+        edges_file_path = os.path.join(self.processed_dir, "edges1.pt")
         
         isProcessed = os.path.exists(nodes_file_path) and os.path.exists(edges_file_path)
         
@@ -36,16 +58,16 @@ class SketchDataset(Dataset):
         if not isProcessed:
             self.process()
         
-        self.nodes = torch.load(os.path.join(self.processed_dir, 'nodes.pt'))
-        self.edges = torch.load(os.path.join(self.processed_dir, 'edges.pt'))
+        self.nodes = torch.load(os.path.join(self.processed_dir, 'nodes1.pt'))
+        self.edges = torch.load(os.path.join(self.processed_dir, 'edges1.pt'))
         
     @property
     def raw_file_names(self):
-        return ['sg_all.npy']
+        return ['sg_t16_train.npy', 'sg_t16_validation.npy', 'sg_t16_test.npy']
     
     @property 
     def processed_file_names(self):
-        return ["nodes.npy","edges.npy"]
+        return ["nodes1.npy","edges1.npy"]
     
     @property
     def num_node_features(self):
@@ -56,25 +78,33 @@ class SketchDataset(Dataset):
         return EDGE_FEATURE_DIMENSION
     
     def download(self):
-        path = download_url(url = "https://sketchgraphs.cs.princeton.edu/sequence/sg_all.npy", 
+        path = download_url(url = "https://sketchgraphs.cs.princeton.edu/sequence/sg_t16_train.npy", 
+                            folder = self.raw_dir
+                           );
+        path = download_url(url = "https://sketchgraphs.cs.princeton.edu/sequence/sg_t16_validation.npy", 
+                            folder = self.raw_dir
+                           );
+        path = download_url(url = "https://sketchgraphs.cs.princeton.edu/sequence/sg_t16_test.npy", 
                             folder = self.raw_dir
                            );
         # print("Downloaded SketchGraphs dataset to " + path)
 
     def process(self):
-        save_nodes = torch.zeros(3981513, MAX_NUM_PRIMITIVES, NODE_FEATURE_DIMENSION)
-        save_edges = torch.zeros(3981513, MAX_NUM_PRIMITIVES, MAX_NUM_PRIMITIVES, EDGE_FEATURE_DIMENSION)
+        save_nodes = torch.zeros(2127996, MAX_NUM_PRIMITIVES, NODE_FEATURE_DIMENSION)
+        save_edges = torch.zeros(2127996, MAX_NUM_PRIMITIVES, MAX_NUM_PRIMITIVES, EDGE_FEATURE_DIMENSION)
         # Change dir to SketchGraphs so module not found error doesn't popup
         os.chdir('SketchGraphs/')
         # Load SketchGraphs sequence data dictionary
-        seq_data = flat_array.load_dictionary_flat(os.path.join("../", self.raw_dir, 'sg_all.npy'))
-        sequences = seq_data["sequences"]
+        seq_train_data = flat_array.load_dictionary_flat(os.path.join("../", self.raw_dir, 'sg_t16_train.npy'))
+        seq_validation_data = flat_array.load_dictionary_flat(os.path.join("../", self.raw_dir, 'sg_t16_validation.npy'))
+        seq_test_data = flat_array.load_dictionary_flat(os.path.join("../", self.raw_dir, 'sg_t16_test.npy'))
+        sequences = itertools.chain(seq_train_data["sequences"], seq_validation_data["sequences"], seq_test_data["sequences"])
         idx = 0
         #save_nodes = torch.zeros([128,MAX_NUM_PRIMITIVES,NODE_FEATURE_DIMENSION])
         #save_edges = torch.zeros([128,MAX_NUM_PRIMITIVES,MAX_NUM_PRIMITIVES,EDGE_FEATURE_DIMENSION])
         #save_node_params_masks = torch.zeros([128,MAX_NUM_PRIMITIVES,NODE_FEATURE_DIMENSION - 6])
-        for i in tqdm(range(len(sequences))):
-            seq = sequences[i]
+        for _ in tqdm(range(len(seq_train_data["sequences"]) + len(seq_validation_data["sequences"]) + len(seq_test_data["sequences"]))):
+            seq = next(sequences)
             sketch = datalib.sketch_from_sequence(seq)
             # Remove invalid sketches
             if sketch is None:
@@ -116,8 +146,8 @@ class SketchDataset(Dataset):
         # Save file flag and Change dir back
         # open(os.path.join("../", self.processed_dir, 'finished_processing'), 'a').close()
         os.chdir('../')
-        torch.save(save_nodes, os.path.join(self.processed_dir, 'nodes.pt'))
-        torch.save(save_edges, os.path.join(self.processed_dir, 'edges.pt'))
+        torch.save(save_nodes, os.path.join(self.processed_dir, 'nodes1.pt'))
+        torch.save(save_edges, os.path.join(self.processed_dir, 'edges1.pt'))
         print("Saved Graphs: ", idx)
         
     @staticmethod
@@ -614,3 +644,4 @@ class SketchDataset(Dataset):
         # so ~4.4 million data files are partitioned into ~88 subdirectories containing atmost 50,000 data files each
         
         return self.nodes[idx], self.edges[idx], SketchDataset.params_mask(self.nodes[idx])
+

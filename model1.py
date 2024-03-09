@@ -250,7 +250,7 @@ class TransformerLayer(nn.Module):
         nodes_heads = torch.Tensor().to(nodes.device)
         edges_heads = torch.Tensor().to(edges.device)
         for attention_head in self.attention_heads:
-            temp_nodes, temp_edges = attention_head(nodes, edges) # nodes = batch_size x num_nodes x out_node_dim; edges = batch_size x num_nodes x num_nodes x out_node_dim
+            temp_nodes, temp_edges = attention_head(nodes, edges) # nodes = batch_size x num_nodes x (out_node_dim * out_node_dim); edges = batch_size x num_nodes x num_nodes x out_node_dim
             nodes_heads = torch.cat(tensors = (nodes_heads, temp_nodes), dim = 2)
             edges_heads = torch.cat(tensors = (edges_heads, temp_edges), dim = 3)
         # now nodes_heads = batch_size x num_nodes x (num_heads * out_node_dim)
@@ -297,8 +297,8 @@ class AttentionHead(nn.Module):
         values = self.lin_value(nodes)  # batch_size x num_nodes x out_node_dim
 
         # Outer Product Attention -------
-        queries = queries.unsqueeze(2)                                       # batch_size x num_nodes x 1 x out_node_dim (each element in batch is a column tensor where each element is a row? vector)
-        keys = keys.unsqueeze(1)                                             # batch_size x 1 x num_nodes x out_node_dims (each element in batch is a row tensor where each element is a row? vector)
+        queries = queries.unsqueeze(2)                             # batch_size x num_nodes x 1 x out_node_dim (each element in batch is a column tensor where each element is a row? vector)
+        keys = keys.unsqueeze(1)                                   # batch_size x 1 x num_nodes x out_node_dims (each element in batch is a row tensor where each element is a row? vector)
         attention = queries * keys / math.sqrt(self.out_node_dim)  # batch_size x num_nodes x num_nodes x out_node_dim (each element in batch is a 2d tensor where each element is a row? vector)
 
         # Incorporate edge features into attention
@@ -307,9 +307,9 @@ class AttentionHead(nn.Module):
         # Normalize attention; Digress uses softmax to normalize but the original outer product attention paper uses tanh
         normalized_attention = torch.softmax(input = edge_attention, dim = 3) # element wise softmax, so every element vector is normalized
 
-        # Weight node representations
-        values = values.unsqueeze(1)                               # batch_size x 1 x num_nodes x out_node_dims
-        weighted_values = normalized_attention.permute(0, 1, 3, 2) @ values  # batch_size x num_nodes x out_node_dim x out_node_dim
+        # Weight node representations and sum
+        values = values.unsqueeze(1)  # batch_size x 1 x num_nodes x out_node_dims
+        weighted_values = (normalized_attention * values).sum(dim = 2)  # batch_size x num_nodes x out_node_dim
 
         return weighted_values, edge_attention
 

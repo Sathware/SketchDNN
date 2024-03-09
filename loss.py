@@ -9,11 +9,11 @@ def reconstruction_loss(pred_nodes : Tensor, pred_edges : Tensor, target_nodes :
     return node_loss(pred_nodes, target_nodes) + 0.1 * edge_loss(pred_edges, target_edges)
 
 def kl_loss(means : Tensor, logvars : Tensor):
-    # MAX_LOGVAR = 20
-    # logvars = torch.clamp(input = logvars, max = MAX_LOGVAR)
+    MAX_LOGVAR = 20
+    logvars = torch.clamp(input = logvars, max = MAX_LOGVAR)
 
     kld = -0.5 * torch.mean(1 + logvars - means * means - torch.exp(logvars))
-    # kld = torch.clamp(input = kld, max = 1000)
+    kld = torch.clamp(input = kld, max = 1000)
     return kld
 
 def node_loss(pred_nodes : Tensor, target_nodes : Tensor) -> Tensor:

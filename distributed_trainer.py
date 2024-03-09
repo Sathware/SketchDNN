@@ -6,7 +6,7 @@ from matplotlib import pyplot as plt
 from torch.utils.tensorboard.writer import SummaryWriter
 # from torch.profiler import profile, record_function, ProfilerActivity
 import torch
-from model import GVAE
+from model2 import GVAE
 from loss import reconstruction_loss, kl_loss
 from dataset import SketchDataset
 from torch.utils.data import DataLoader, Subset, random_split
@@ -50,7 +50,7 @@ class MultiGPUTrainer:
                                           pin_memory = True, 
                                           sampler = self.validate_sampler
                                          )
-        self.optimizer = torch.optim.Adam(self.model.parameters(), lr = learning_rate)
+        self.optimizer = torch.optim.AdamW(self.model.parameters(), lr = learning_rate)
         self.scheduler = torch.optim.lr_scheduler.ExponentialLR(self.optimizer, gamma = 0.9)
         
         self.gpu_id = gpu_id
@@ -70,13 +70,13 @@ class MultiGPUTrainer:
 
         pred_nodes, pred_edges, means, logvars = self.model(nodes, edges)
 
-        # assert pred_nodes.isfinite().all(), "Model output for nodes has non finite values"
-        # assert pred_edges.isfinite().all(), "Model output for edges has non finite values"
-        # assert means.isfinite().all(),      "Model output for means has non finite values"
-        # assert logvars.isfinite().all(),    "Model output for logvars has non finite values"
+        assert pred_nodes.isfinite().all(), "Model output for nodes has non finite values"
+        assert pred_edges.isfinite().all(), "Model output for edges has non finite values"
+        assert means.isfinite().all(),      "Model output for means has non finite values"
+        assert logvars.isfinite().all(),    "Model output for logvars has non finite values"
 
         loss = reconstruction_loss(pred_nodes, pred_edges, nodes, edges)
-        loss += kl_loss(means, logvars)
+        loss += 0.1 * kl_loss(means, logvars)
 
         assert loss.isfinite().all(), "Loss is non finite value"
 
