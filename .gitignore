@@ -2,6 +2,8 @@ data/raw/sg_all.npy
 data/raw/sg_all.npy:Zone.Identifier
 data/
 best_model_checkpoint.pth
+checkpoints/
 __pycache__/
 .gitignore
 runs/
+runs2/

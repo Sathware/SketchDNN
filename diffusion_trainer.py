@@ -6,8 +6,8 @@ from matplotlib import pyplot as plt
 from torch.utils.tensorboard.writer import SummaryWriter
 # from torch.profiler import profile, record_function, ProfilerActivity
 import torch
-from model2 import GVAE
-from loss import reconstruction_loss, kl_loss
+from diffusion_model import GD3PM
+from loss import diffusion_loss
 from dataset1 import SketchDataset
 from torch.utils.data import DataLoader, Subset, random_split
 os.chdir('SketchGraphs/')
@@ -25,7 +25,7 @@ from torch.distributed import init_process_group, destroy_process_group
 class MultiGPUTrainer:
     def __init__(
             self,
-            model: GVAE,
+            model: GD3PM,
             train_set: Subset,
             validate_set: Subset,
             learning_rate: float,
@@ -71,6 +71,7 @@ class MultiGPUTrainer:
         self.min_validation_loss = float('inf')
 
         self.record_freq = len(self.train_loader) // 5
+        self.batch_size = batch_size
 
     
     def train_batch(self, nodes : torch.Tensor, edges : torch.Tensor, params_mask : torch.Tensor) -> float:
@@ -80,7 +81,10 @@ class MultiGPUTrainer:
         edges = edges.to(self.gpu_id)
         params_mask = params_mask.to(self.gpu_id)
 
-        pred_nodes, pred_edges, means, logvars = self.model(nodes, edges)
+        batch_size = nodes.size(0)
+        timestep = torch.randint(low = 1, high = self.model.module.max_steps, size = (batch_size,), device = self.gpu_id)
+        noisy_nodes, noisy_edges, true_noise = self.model.module.noise_scheduler(nodes, edges, timestep)
+        pred_nodes, pred_edges = self.model(noisy_nodes, noisy_edges, timestep)
 
         # assert pred_nodes.isfinite().all(), "Model output for nodes has non finite values"
         # assert pred_edges.isfinite().all(), "Model output for edges has non finite values"
@@ -88,15 +92,13 @@ class MultiGPUTrainer:
         # assert logvars.isfinite().all(),    "Model output for logvars has non finite values"
 
         loss_dict = {} # dictionary to record loss values 
-        loss = reconstruction_loss(pred_nodes, pred_edges, nodes, edges, params_mask, loss_dict) 
-        loss += kl_loss(means, logvars, loss_dict)
+        loss = diffusion_loss(pred_nodes, pred_edges, nodes, edges, true_noise, params_mask, loss_dict)
 
         # assert loss.isfinite().all(), "Loss is non finite value"
 
         loss.backward()
         self.optimizer.step()
 
-        loss_dict["total loss"] = loss.item()
         return loss_dict
     
     def train_epoch(self):
@@ -128,7 +130,7 @@ class MultiGPUTrainer:
         self.writer.add_scalar("Training/Edge_sub_a", loss_dict["edge sub_a cross"], self.global_step)
         self.writer.add_scalar("Training/Edge_sub_b", loss_dict["edge sub_b cross"], self.global_step)
         self.writer.add_scalar("Training/Edge_Cross", loss_dict["edge cross"], self.global_step)
-        self.writer.add_scalar("Training/KLD", loss_dict["kld"], self.global_step)
+        # self.writer.add_scalar("Training/KLD", loss_dict["kld"], self.global_step)
         #self.writer.add_scalar("Training/Posterior_Collapse_Regularization", loss_dict["postcollapse_reg"], self.global_step)
 
     @torch.no_grad()
@@ -141,9 +143,12 @@ class MultiGPUTrainer:
             edges = edges.to(self.gpu_id)
             params_mask = params_mask.to(self.gpu_id)
 
-            pred_nodes, pred_edges, means, logvars = self.model(nodes, edges)
-
-            loss = reconstruction_loss(pred_nodes, pred_edges, nodes, edges, params_mask) + kl_loss(means, logvars)
+            batch_size = nodes.size(0)
+            timestep = torch.randint(low = 1, high = self.model.module.max_steps, size = (batch_size,), device = self.gpu_id)
+            noisy_nodes, noisy_edges, true_noise = self.model.module.noise_scheduler(nodes, edges, timestep)
+            pred_nodes, pred_edges = self.model(noisy_nodes, noisy_edges, timestep)
+            
+            loss = diffusion_loss(pred_nodes, pred_edges, nodes, edges, true_noise, params_mask)
 
             total_loss += loss
 
@@ -161,11 +166,13 @@ class MultiGPUTrainer:
         
         if self.gpu_id == 0:
             # Render the actual CAD Sketch
+            noised_nodes, noised_edges = self.model.module.noise(nodes[0:4], edges[0:4])
+            denoised_nodes, denoised_edges = self.model.module.denoise(noised_nodes, noised_edges)
             fig, axes = plt.subplots(nrows = 4, ncols = 2, figsize=(8, 16))
             fig.suptitle(f"Target (left) vs Preds (right) for epoch {self.curr_epoch}")
             for i in range(4):
                 target_sketch = SketchDataset.preds_to_sketch(nodes[i].cpu(), edges[i].cpu())
-                pred_sketch = SketchDataset.preds_to_sketch(pred_nodes[i].cpu(), pred_edges[i].cpu())
+                pred_sketch = SketchDataset.preds_to_sketch(denoised_nodes[i].cpu(), denoised_edges[i].cpu())
                 
                 datalib.render_sketch(target_sketch, axes[i, 0])
                 # SketchDataset.superimpose_constraints(target_sketch, axes[i, 0])
@@ -236,7 +243,7 @@ def train_on_multiple_gpus(rank: int,
     #train_set = Subset(dataset = dataset, indices = train_indices)
     #validate_set = Subset(dataset = dataset, indices = validate_indices)
 
-    model = GVAE(rank)
+    model = GD3PM(rank)
     # if os.path.exists(f"best_model_checkpoint.pth"):
     #     model.load_state_dict(torch.load(f"best_model_checkpoint.pth"))
 

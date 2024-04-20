@@ -5,6 +5,17 @@ MAX_NUM_CONSTRAINTS = 208
 NUM_PRIMITIVE_TYPES = 5
 NUM_CONSTRAINT_TYPES = 9
 
+node_bce_weight = 1.0
+node_cross_weight = 1.0
+node_mse_weight = 1.0
+
+edge_suba_weight = 1.0
+edge_subb_weight = 1.0
+edge_constraint_weight = 1.0
+
+kld_weight = .001
+reg_weight = .01
+
 GRAPH_EMBEDDING_SIZE = 512
 
 HYPER_PARAMETERS = {

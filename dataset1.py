@@ -50,6 +50,7 @@ class SketchDataset(Dataset):
             
         nodes_file_path = os.path.join(self.processed_dir, "nodes1.pt")
         edges_file_path = os.path.join(self.processed_dir, "edges1.pt")
+        params_mask_file_path = os.path.join(self.processed_dir, "node_params_mask.pt")
         
         isProcessed = os.path.exists(nodes_file_path) and os.path.exists(edges_file_path)
         
@@ -58,8 +59,9 @@ class SketchDataset(Dataset):
         if not isProcessed:
             self.process()
         
-        self.nodes = torch.load(os.path.join(self.processed_dir, 'nodes1.pt'))
-        self.edges = torch.load(os.path.join(self.processed_dir, 'edges1.pt'))
+        self.nodes = torch.load(nodes_file_path)
+        self.edges = torch.load(edges_file_path)
+        self.node_params_mask = torch.load(params_mask_file_path)
         
     @property
     def raw_file_names(self):
@@ -67,7 +69,7 @@ class SketchDataset(Dataset):
     
     @property 
     def processed_file_names(self):
-        return ["nodes1.npy","edges1.npy"]
+        return ["nodes1.pt","edges1.pt","node_params_mask.pt"]
     
     @property
     def num_node_features(self):
@@ -116,7 +118,7 @@ class SketchDataset(Dataset):
             # Construct Data Object containing graph
             node_features, adjacency_list, edge_features = SketchDataset.sketch_to_graph(sketch)
             
-            # Normalize node paramter values (except arc startParam and endParam) to be in range [-10, 10]
+            # Normalize node paramter values (except arc startParam and endParam) to be in range [-1, 1]
             val_indices = [6,7,8,9,10,11,12,13,14,15,18,19]
             node_features[:,val_indices] = node_features[:,val_indices] / torch.max(torch.abs(node_features[:,val_indices]))
             
@@ -448,71 +450,68 @@ class SketchDataset(Dataset):
         # Add entities
         for idx in range(len(nodes)):
             entity = nodes[idx]
+            isConstructible = bool(entity[0].item() > 0.0)
             match torch.argmax(entity[1:6]):
                 case 0:
                     # Create Line
                     id = str(idx + 1)
-                    isConstructible = bool(entity[0])
                     pnt = entity[6:8]
                     startParam = 0
                     dir = (entity[8:10] - entity[6:8]) / torch.linalg.vector_norm(entity[8:10] - entity[6:8])
                     endParam = torch.linalg.vector_norm(entity[8:10] - entity[6:8])
                     line = Line(entityId = id,
                                 isConstruction = isConstructible, 
-                                pntX = pnt[0], 
-                                pntY = pnt[1], 
-                                dirX = dir[0], 
-                                dirY = dir[1], 
+                                pntX = pnt[0].item(), 
+                                pntY = pnt[1].item(), 
+                                dirX = dir[0].item(), 
+                                dirY = dir[1].item(), 
                                 startParam = startParam, 
-                                endParam = endParam
+                                endParam = endParam.item()
                                );
                     sketch.entities[id] = line
                 case 1:
                     # Create Circle
                     id = str(idx + 1)
-                    isConstructible = bool(entity[0])
                     center = entity[10:12]
                     radius = entity[12]
                     circle = Circle(entityId = id, 
                                   isConstruction = isConstructible, 
-                                  xCenter = center[0], 
-                                  yCenter = center[1], 
+                                  xCenter = center[0].item(), 
+                                  yCenter = center[1].item(), 
                                   xDir = 1, 
                                   yDir = 0, 
-                                  radius = radius, 
+                                  radius = radius.item(), 
                                   clockwise = False
                                  );
                     sketch.entities[id] = circle
                 case 2: 
                     # Create Arc
                     id = str(idx + 1)
-                    isConstructible = bool(entity[0])
                     center = entity[13:15]
                     radius = entity[15]
                     startParam = entity[16] * (2*math.pi)
                     endParam = entity[17] * (2*math.pi)
                     arc = Arc(entityId = id, 
                               isConstruction = isConstructible, 
-                              xCenter = center[0], 
-                              yCenter = center[1], 
+                              xCenter = center[0].item(), 
+                              yCenter = center[1].item(), 
                               xDir = 1, 
                               yDir = 0,
-                              radius = radius, 
-                              startParam = startParam,
-                              endParam = endParam, 
+                              radius = radius.item(), 
+                              startParam = startParam.item(),
+                              endParam = endParam.item(), 
                               clockwise = False
                              );
                     sketch.entities[id] = arc
                 case 3:
                     # Create Point
                     id = str(idx + 1)
-                    isConstructible = bool(entity[0])
                     x = entity[18]
                     y = entity[19]
                     point = Point(entityId = id, 
                                   isConstruction = isConstructible,
-                                  x = x,
-                                  y = y
+                                  x = x.item(),
+                                  y = y.item()
                                  );
                     sketch.entities[id] = point
                 case _:
@@ -564,7 +563,7 @@ class SketchDataset(Dataset):
                 edge = torch.Tensor([i, j])
                 if torch.equal(edge[0], edge[1]):
                     # Constraint only applies to single entity
-                    node_ref = str(edge[0])
+                    node_ref = str(int(edge[0].item()))
                     match torch.argmax(constraint[0:4]):
                         case 0:
                             node_ref = node_ref + ".start"
@@ -576,7 +575,7 @@ class SketchDataset(Dataset):
                     params.append(param1)
                 else:
                     # Constraint applies to 2 primitives
-                    node_a_ref = str(edge[0])
+                    node_a_ref = str(int(edge[0].item()))
                     match torch.argmax(constraint[0:4]):
                         case 0:
                             node_ref = node_a_ref + ".start"
@@ -584,7 +583,7 @@ class SketchDataset(Dataset):
                             node_ref = node_a_ref + ".center"
                         case 2:
                             node_ref = node_a_ref + ".end"
-                    node_b_ref = str(edge[1])
+                    node_b_ref = str(int(edge[1].item()))
                     match torch.argmax(constraint[4:8]):
                         case 0:
                             node_ref = node_b_ref + ".start"
@@ -620,6 +619,138 @@ class SketchDataset(Dataset):
                     mask[i][12:] = 1
             i = i + 1
         return mask
+    
+    @staticmethod
+    def batched_params_mask(nodes):
+        # batch_size x num_nodes x num_parameters
+        batch_size = nodes.size(0)
+        mask = torch.zeros(size = (batch_size, MAX_NUM_PRIMITIVES, NODE_FEATURE_DIMENSION - NUM_PRIMITIVE_TYPES - 1))
+        for b in range(batch_size):
+            for i, node in enumerate(nodes[b]):
+                match torch.argmax(node[1:6]):
+                    case 0:
+                        # Line
+                        mask[b,i,0:4] = 1
+                    case 1:
+                        # Circle
+                        mask[b,i,4:7] = 1
+                    case 2:
+                        # Arc
+                        mask[b,i,7:12] = 1
+                    case 3:
+                        # Point
+                        mask[b,i,12:] = 1
+        return mask
+    
+    @staticmethod
+    def get_start_point(primitive):
+        match primitive.type:
+            case EntityType.Line:
+                return torch.from_numpy(primitive.start_point)
+            case EntityType.Circle:
+                center = torch.from_numpy(primitive.center_point)
+                center[0] += primitive.radius # add radius to x coord
+                return center
+            case EntityType.Arc:
+                return torch.from_numpy(primitive.start_point)
+            case EntityType.Point:
+                return torch.Tensor([primitive.x, primitive.y])
+            case _:
+                return None
+            
+    @staticmethod
+    def get_end_point(primitive):
+        match primitive.type:
+            case EntityType.Line:
+                return torch.from_numpy(primitive.end_point)
+            case EntityType.Circle:
+                center = torch.from_numpy(primitive.center_point)
+                center[0] += primitive.radius # add radius to x coord
+                return center
+            case EntityType.Arc:
+                return torch.from_numpy(primitive.end_point)
+            case EntityType.Point:
+                return torch.Tensor([primitive.x, primitive.y])
+            case _:
+                return None
+            
+    @staticmethod
+    def get_mid_point(primitive):
+        match primitive.type:
+            case EntityType.Line:
+                return (torch.from_numpy(primitive.end_point) + torch.from_numpy(primitive.end_point)) / 2
+            case EntityType.Circle:
+                center = torch.from_numpy(primitive.center_point)
+                center[0] -= primitive.radius # add radius to x coord
+                return center
+            case EntityType.Arc:
+                return torch.from_numpy(primitive.mid_point)
+            case EntityType.Point:
+                return torch.Tensor([primitive.x, primitive.y])
+            case _:
+                return None
+            
+    @staticmethod
+    def superimpose_constraints(sketch, ax):
+        for constraint in sketch.constraints.values():
+            point1 = None
+            point2 = None
+            color = None
+            #primitive1_idx = int(float(constraint.parameters[0].referenceMain)) + 1
+            #print(sketch.entities[str(primitive1_idx)])
+            prim1 = constraint.parameters[0].value.split('.')
+            prim1_idx = prim1[0]
+            prim1_sub = prim1[1] if len(prim1) > 1 else ''
+            prim1_idx = str(int(prim1_idx) + 1)
+            match prim1_sub:
+                case "start":
+                    point1 = SketchDataset.get_start_point(sketch.entities[prim1_idx])
+                case "center":
+                    point1 = SketchDataset.get_mid_point(sketch.entities[prim1_idx])
+                case "end":
+                    point1 = SketchDataset.get_end_point(sketch.entities[prim1_idx])
+                case _:
+                    point1 = SketchDataset.get_start_point(sketch.entities[prim1_idx])
+            # print(constraint.parameters[0].value)
+            if len(constraint.parameters) > 1:
+                #primitive2_idx = int(float(constraint.parameters[1].referenceMain)) + 1
+                #print(sketch.entities[str(primitive2_idx)])
+                prim2 = constraint.parameters[1].value.split('.')
+                prim2_idx = prim2[0]
+                prim2_sub = prim2[1] if len(prim1) > 1 else ''
+                prim2_idx = str(int(prim2_idx) + 1)
+                match prim2_sub:
+                    case "start":
+                        point2 = SketchDataset.get_start_point(sketch.entities[prim2_idx])
+                    case "center":
+                        point2 = SketchDataset.get_mid_point(sketch.entities[prim2_idx])
+                    case "end":
+                        point2 = SketchDataset.get_end_point(sketch.entities[prim2_idx])
+                    case _:
+                        point2 = SketchDataset.get_start_point(sketch.entities[prim2_idx])
+                # print(constraint.parameters[1].value)
+
+            match constraint.type:
+                case ConstraintType.Coincident:
+                    color = 'green'
+                case ConstraintType.Horizontal:
+                    color = 'red'
+                case ConstraintType.Vertical:
+                    color = 'brown'
+                case ConstraintType.Parallel:
+                    color = 'pink'
+                case ConstraintType.Perpendicular:
+                    color = 'purple'
+                case ConstraintType.Tangent:
+                    color = 'orange'
+                case ConstraintType.Midpoint:
+                    color = 'blue'
+                case ConstraintType.Equal:
+                    color = 'slategrey'
+                case _:
+                    continue
+            ax.plot((point1[0], point2[0]), (point1[1], point2[1]), color, linestyle='--', linewidth=1, marker=None)
+        return
 
     @staticmethod
     def sort_graph(node_matrix, adjacency_list):
@@ -643,5 +774,5 @@ class SketchDataset(Dataset):
         # For whatever reason there is a limit of ~3 million files/sub directories per directory on my university's nfs share, 
         # so ~4.4 million data files are partitioned into ~88 subdirectories containing atmost 50,000 data files each
         
-        return self.nodes[idx], self.edges[idx], SketchDataset.params_mask(self.nodes[idx])
+        return self.nodes[idx], self.edges[idx], self.node_params_mask[idx]
 
