@@ -71,6 +71,8 @@ class MultiGPUTrainer:
         self.min_validation_loss = float('inf')
 
         self.record_freq = len(self.train_loader) // 5
+        if self.record_freq == 0: self.record_freq = 1
+        
         self.batch_size = batch_size
 
     
@@ -206,8 +208,9 @@ class MultiGPUTrainer:
         while (self.curr_epoch < self.num_epochs):
             self.model.train()
             self.train_epoch()
-            self.model.eval()
-            self.validate()
+            if self.curr_epoch % 100 == 0:
+                self.model.eval()
+                self.validate()
             self.curr_epoch += 1
             # print("Learning Rate: ", self.scheduler.get_last_lr())
     

@@ -450,7 +450,7 @@ class SketchDataset(Dataset):
         # Add entities
         for idx in range(len(nodes)):
             entity = nodes[idx]
-            isConstructible = bool(entity[0].item() > 0.0)
+            isConstructible = bool(entity[0].item() >= 0.5)
             match torch.argmax(entity[1:6]):
                 case 0:
                     # Create Line
@@ -751,6 +751,10 @@ class SketchDataset(Dataset):
                     continue
             ax.plot((point1[0], point2[0]), (point1[1], point2[1]), color, linestyle='--', linewidth=1, marker=None)
         return
+    
+    @staticmethod
+    def render_graph(nodes, edges, ax = None):
+        return datalib.render_sketch(SketchDataset.preds_to_sketch(nodes, edges), ax)
 
     @staticmethod
     def sort_graph(node_matrix, adjacency_list):

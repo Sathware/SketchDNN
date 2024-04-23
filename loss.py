@@ -173,8 +173,11 @@ def diffusion_loss(pred_nodes, pred_edges, target_nodes, target_edges, true_nois
         # pos_weight = weight,
         reduction = 'mean') * node_bce_weight
 
-    pred_noise = pred_nodes[:,:,6:]
-    mse = ((pred_noise - true_noise) ** 2 * params_mask).sum() / params_mask.sum() * node_mse_weight 
+    # pred_noise = pred_nodes[:,:,6:]
+    # mse = ((pred_noise - true_noise) ** 2 * params_mask).sum() / params_mask.sum() * node_mse_weight 
+    pred_params = pred_nodes[:,:,6:]
+    target_params = target_nodes[:,:,6:]
+    mse = ((pred_params - target_params) ** 2 * params_mask).sum() / params_mask.sum() * node_mse_weight
 
     node_loss = bce + node_cross + mse
 
