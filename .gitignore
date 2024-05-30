@@ -7,4 +7,6 @@ __pycache__/
 .gitignore
 runs/
 runs2/
+runs3/
+runs4/
 temp_dataset.pth

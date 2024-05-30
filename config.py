@@ -5,6 +5,13 @@ MAX_NUM_CONSTRAINTS = 208
 NUM_PRIMITIVE_TYPES = 5
 NUM_CONSTRAINT_TYPES = 9
 
+# NodeBool   = slice(start = 0, stop = 1, step = 1)
+# NodeType   = slice(start = 1, stop = 7, step = 1)
+# NodeParams = slice(start = 7, stop = 20, step = 1)
+# EdgeSubA   = slice(start = 0, stop = 4, step = 1)
+# EdgeSubB   = slice(start = 4, stop = 8, step = 1)
+# EdgeType   = slice(start = 8, stop = 17, step = 1)
+
 node_bce_weight = 1.0
 node_cross_weight = 1.0
 node_mse_weight = 1.0
