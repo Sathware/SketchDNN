@@ -5,8 +5,10 @@ best_model_checkpoint.pth
 checkpoints/
 __pycache__/
 .gitignore
-runs/
-runs2/
-runs3/
-runs4/
+runs*/
 temp_dataset.pth
+test/
+seeds/
+*.pth
+gumbeldiff_overfit_model.pth
+*.png

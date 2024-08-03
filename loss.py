@@ -125,7 +125,7 @@ def edge_loss(pred_edges : Tensor, target_edges : Tensor, loss_dict : dict = Non
     return edge_loss
 
 
-def diffusion_loss(pred_nodes, pred_edges, target_nodes, target_edges, true_noise, params_mask, loss_dict = None):
+def diffusion_loss(pred_nodes, pred_edges, target_nodes, target_edges, params_mask, loss_dict = None):
     '''Edge Loss'''
     # Only apply subnode loss to constraints that are not none -------
     subnode_a_labels = torch.argmax(target_edges[:,:,:,0:4], dim = 3)

@@ -12,13 +12,15 @@ NUM_CONSTRAINT_TYPES = 9
 # EdgeSubB   = slice(start = 4, stop = 8, step = 1)
 # EdgeType   = slice(start = 8, stop = 17, step = 1)
 
+log_clip = -10
+
 node_bce_weight = 1.0
 node_cross_weight = 1.0
-node_mse_weight = 1.0
+node_mse_weight = 16.0
 
-edge_suba_weight = 1.0
-edge_subb_weight = 1.0
-edge_constraint_weight = 1.0
+edge_suba_weight = 0.1
+edge_subb_weight = 0.1
+edge_constraint_weight = 0.1
 
 kld_weight = .001
 reg_weight = .01

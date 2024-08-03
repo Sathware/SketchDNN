@@ -138,7 +138,7 @@ class TransformerEncoder(nn.Module):
         haggr_weights = self.mlp_haggr_weights(graph_features) # batch_size x num_nodes x num_nodes x 1
         graph_features = self.mlp_haggr_values(graph_features) # batch_size x num_nodes x num_nodes x hidden_dim
 
-        graph_embs = (haggr_weights.permute(0, 1, 3, 2) @ graph_features).squeeze().flatten(start_dim = 1) # batch_size x (num_nodes * hidden_dim)
+        graph_embs = (haggr_weights.permute(0, 1, 3, 2) @ graph_features).squeeze(2).flatten(start_dim = 1) # batch_size x (num_nodes * hidden_dim)
         del haggr_weights
         del graph_features
 
@@ -231,14 +231,14 @@ class TransformerDecoder(nn.Module):
         nodes = self.mlp_out_nodes(nodes) # batch_size x num_nodes x node_dim
         edges = self.mlp_out_edges(edges) # batch_size x num_nodes x num_nodes x edge_dim
 
-        # # sigmoid and softmax for nodes
-        # nodes[:,:,0] = F.sigmoid(nodes[:,:,0])              # Sigmoid for isConstructible
-        # nodes[:,:,1:6] = F.softmax(nodes[:,:,1:6], dim = 2) # Softmax for primitive classes (i.e. line, circle, arc, point, none)
+        # sigmoid and softmax for nodes
+        nodes[:,:,0] = F.sigmoid(nodes[:,:,0])              # Sigmoid for isConstructible
+        nodes[:,:,1:6] = F.softmax(nodes[:,:,1:6], dim = 2) # Softmax for primitive classes (i.e. line, circle, arc, point, none)
         
-        # # softmax for constraints; Conceptual map => n1 (out) -> n2 (in) i.e. out_node, edge, in_node
-        # edges[:,:,:,0:4] = F.softmax(edges[:,:,:,0:4], dim = 3) # Softmax for out_node subnode type
-        # edges[:,:,:,4:8] = F.softmax(edges[:,:,:,4:8], dim = 3) # Softmax for in_node subnode type
-        # edges[:,:,:,8: ] = F.softmax(edges[:,:,:,8: ], dim = 3) # Softmax for edge (aka constraint) type (i.e horizontal, vertical, etc...)
+        # softmax for constraints; Conceptual map => n1 (out) -> n2 (in) i.e. out_node, edge, in_node
+        edges[:,:,:,0:4] = F.softmax(edges[:,:,:,0:4], dim = 3) # Softmax for out_node subnode type
+        edges[:,:,:,4:8] = F.softmax(edges[:,:,:,4:8], dim = 3) # Softmax for in_node subnode type
+        edges[:,:,:,8: ] = F.softmax(edges[:,:,:,8: ], dim = 3) # Softmax for edge (aka constraint) type (i.e horizontal, vertical, etc...)
 
         return nodes, edges
 
