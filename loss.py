@@ -1,7 +1,7 @@
 import torch
 import torch.nn.functional as F
 from torch import Tensor
-from config import node_bce_weight, node_cross_weight, node_mse_weight, edge_suba_weight, edge_subb_weight, edge_constraint_weight, kld_weight, reg_weight
+from config import node_bce_weight, node_cross_weight, node_mse_weight, node_mae_weight, edge_suba_weight, edge_subb_weight, edge_constraint_weight, kld_weight, reg_weight
 from dataset1 import SketchDataset
 
 def reconstruction_loss(pred_nodes : Tensor, pred_edges : Tensor, target_nodes : Tensor, target_edges : Tensor, params_mask : Tensor, loss_dict : dict = None) -> Tensor:    
@@ -52,25 +52,15 @@ def node_loss(pred_nodes : Tensor, target_nodes : Tensor, params_mask : Tensor, 
         target = torch.masked_select(target_isconstruct, none_node_mask),
         # pos_weight = weight,
         reduction = 'mean') * node_bce_weight
-    
-    # target_params = target_nodes[:,:,6:] # batch_size x num_nodes x (num params = 14)
-    # pred_params = pred_nodes[:,:,6:] # batch_size x num_nodes x (num params = 14)
-    #params_mask = SketchDataset.batched_params_mask(target_nodes).to(target_params.device) # batch_size x num_nodes x (num params = 14)
 
-    # Changing the order of the line endpoints shouldn't matter i.e. x1,y1,x2,y2 should be equivalent to x2,y2,x1,y1
-    line_params_t = target_nodes[:,:,6:10] # True params
-    line_params = pred_nodes[:,:,6:10] # model output
-    line_params_tp = target_nodes[:,:,[8,9,6,7]] # True params with endpoints swapped
-    line_diff = torch.sum((line_params - line_params_t) ** 2 * params_mask[:,:,0:4], dim = 2)
-    line_diff_p = torch.sum((line_params - line_params_tp) ** 2 * params_mask[:,:,0:4], dim = 2)
-    line_loss = torch.where(line_diff < line_diff_p, line_diff, line_diff_p).sum()
-    # TODO Order of arc endpoints don't matter
-
-    mse = ((pred_nodes[:,:,10:] - target_nodes[:,:,10:]) ** 2 * params_mask[:,:,4:]).sum() # loss for other params
-    mse = (mse + line_loss) / params_mask.sum() * node_mse_weight
-    # mse = F.mse_loss(input = pred_params * params_mask,
+    pred_params = pred_nodes[:,:,6:]
+    target_params = target_nodes[:,:,6:]
+    mse = F.mse_loss(input = pred_params * params_mask,
+                     target = target_params,
+                     reduction = 'sum') / params_mask.sum() * node_mse_weight
+    # mse = F.l1_loss(input = pred_params * params_mask,
     #                  target = target_params,
-    #                  reduction = 'sum') / params_mask.sum() * node_mse_weight
+    #                  reduction = 'sum') / params_mask.sum() * node_mae_weight
     # ((pred_params - target_params) ** 2 * params_mask).sum() / params_mask.sum() * node_mse_weight
     # mse = F.mse_loss(input = pred_params * params_mask,
     #                  target = target_params, 

@@ -1,0 +1,37 @@
+{
+    "feature" : {
+      "btType": "BTMSketch-151", 
+      "featureType": "newSketch", 
+      "name": "Sketch 1", 
+      "parameters": [
+        {
+          "btType": "BTMParameterQueryList-148",
+          "queries": [
+            {
+              "btType": "BTMIndividualQuery-138",
+              "queryString": "query=qCreatedBy(makeId(\"Front\"), EntityType.FACE);"
+            }
+          ],
+          "parameterId": "sketchPlane" 
+        }
+      ],
+      "entities": [
+        {
+          "btType": "BTMSketchCurve-4",
+          "geometry": {
+            "btType": "BTCurveGeometryCircle-115",
+            "radius": 0.025,  
+            "xCenter": 0.05,
+            "yCenter": 0.05,  
+            "xDir": 1,
+            "yDir": 0, 
+            "clockwise": false 
+          },
+          "centerId": "circle-entity.center",
+          "entityId": "circle-entity"
+        }  
+      ],
+      "constraints": [      
+      ]
+    }
+  }

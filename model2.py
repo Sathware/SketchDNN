@@ -14,7 +14,7 @@ class GVAE(nn.Module):
         self.device = device
         self.node_dim = NODE_FEATURE_DIMENSION
         self.edge_dim = EDGE_FEATURE_DIMENSION
-        self.graph_emb_dim = 1024
+        self.graph_emb_dim = GRAPH_EMBEDDING_SIZE
 
         self.encoder = TransformerEncoder(node_dim = self.node_dim, 
                                           edge_dim = self.edge_dim, 

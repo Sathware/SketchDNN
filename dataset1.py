@@ -11,6 +11,7 @@ import itertools
 from torch_geometric.data import download_url
 import torch_geometric.utils as pygutils
 from config import NODE_FEATURE_DIMENSION, EDGE_FEATURE_DIMENSION, MAX_NUM_PRIMITIVES, MAX_NUM_CONSTRAINTS, NUM_PRIMITIVE_TYPES
+from utils import BoundingBoxShiftScale, GetUniqueIndices
 # You have to import sketchgraphs this way otherwise you get type errors
 os.chdir('SketchGraphs/')
 import sketchgraphs.data as datalib
@@ -48,9 +49,9 @@ class SketchDataset(Dataset):
         if not os.path.exists(os.path.join(self.raw_dir, 'sg_t16_test.npy')):
             self.download()
             
-        nodes_file_path = os.path.join(self.processed_dir, "nodes1.pt")
-        edges_file_path = os.path.join(self.processed_dir, "edges1.pt")
-        params_mask_file_path = os.path.join(self.processed_dir, "node_params_mask.pt")
+        nodes_file_path = os.path.join(self.processed_dir, "nodes2.pt")
+        edges_file_path = os.path.join(self.processed_dir, "edges2.pt")
+        params_mask_file_path = os.path.join(self.processed_dir, "node_params_mask2.pt")
         
         isProcessed = os.path.exists(nodes_file_path) and os.path.exists(edges_file_path)
         
@@ -113,14 +114,17 @@ class SketchDataset(Dataset):
                 continue
             # Filter out sketches with less than 7 or more than 24 primitives
             # or less constraints than primitives or more than 208 constraints
-            if len(sketch.entities) < 7 or len(sketch.entities) > 24 or len(sketch.constraints) < len(sketch.entities) or len(sketch.constraints) > 208:
+            if len(sketch.entities) < 7 or len(sketch.entities) > MAX_NUM_PRIMITIVES or len(sketch.constraints) < len(sketch.entities) or len(sketch.constraints) > 208:
                 continue
             # Construct Data Object containing graph
             node_features, adjacency_list, edge_features = SketchDataset.sketch_to_graph(sketch)
+
+            if node_features.size(0) < 7:
+                continue
             
             # Normalize node paramter values (except arc startParam and endParam) to be in range [-1, 1]
-            val_indices = [6,7,8,9,10,11,12,13,14,15,18,19]
-            node_features[:,val_indices] = node_features[:,val_indices] / torch.max(torch.abs(node_features[:,val_indices]))
+            # val_indices = [6,7,8,9,10,11,12,13,14,15,18,19]
+            # node_features[:,val_indices] = node_features[:,val_indices] / torch.max(torch.abs(node_features[:,val_indices]))
             
             if (not node_features.isfinite().all()):
                 continue
@@ -145,11 +149,24 @@ class SketchDataset(Dataset):
             save_edges[idx] = edges
             
             idx += 1
+        
+        save_nodes = save_nodes[:idx] # Discard unused space
+        save_edges = save_edges[:idx] # Discard unused space
+
+        # Normalize Sketches
+        save_nodes = BoundingBoxShiftScale(save_nodes)
+
+        # Remove duplicate sketches
+        unique_indices = GetUniqueIndices(save_nodes, 2 ** 6)
+        save_nodes = save_nodes[unique_indices]
+        save_edges = save_edges[unique_indices]
+
         # Save file flag and Change dir back
         # open(os.path.join("../", self.processed_dir, 'finished_processing'), 'a').close()
         os.chdir('../')
-        torch.save(save_nodes, os.path.join(self.processed_dir, 'nodes1.pt'))
-        torch.save(save_edges, os.path.join(self.processed_dir, 'edges1.pt'))
+        torch.save(save_nodes, os.path.join(self.processed_dir, 'nodes2.pt'))
+        torch.save(save_edges, os.path.join(self.processed_dir, 'edges2.pt'))
+        torch.save(self.batched_params_mask(save_nodes), os.path.join(self.processed_dir, 'node_params_mask2.pt'))
         print("Saved Graphs: ", idx)
         
     @staticmethod
@@ -176,14 +193,18 @@ class SketchDataset(Dataset):
             node_feature[0] = int(value.isConstruction);
             match value.type:
                 case EntityType.Line:
+                    if numpy.allclose(value.start_point, value.end_point, rtol = 0): continue
                     node_feature[1] = 1;
                     node_feature[6:8] = torch.from_numpy(value.start_point);
                     node_feature[8:10] = torch.from_numpy(value.end_point);
                 case EntityType.Circle:
+                    if numpy.isclose(value.radius, 0, rtol = 0): continue
                     node_feature[2] = 1;
                     node_feature[10:12] = torch.from_numpy(value.center_point);
                     node_feature[12] = value.radius;
                 case EntityType.Arc:
+                    if numpy.isclose(value.radius, 0, rtol = 0): continue
+                    if numpy.allclose(value.start_point, value.end_point, rtol = 0): continue
                     node_feature[3] = 1;
                     node_feature[13:15] = torch.from_numpy(value.center_point);
                     node_feature[15] = value.radius;

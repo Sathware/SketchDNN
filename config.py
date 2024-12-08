@@ -1,6 +1,6 @@
 NODE_FEATURE_DIMENSION = 20
 EDGE_FEATURE_DIMENSION = 17
-MAX_NUM_PRIMITIVES = 24
+MAX_NUM_PRIMITIVES = 16
 MAX_NUM_CONSTRAINTS = 208
 NUM_PRIMITIVE_TYPES = 5
 NUM_CONSTRAINT_TYPES = 9
@@ -17,15 +17,16 @@ log_clip = -10
 node_bce_weight = 1.0
 node_cross_weight = 1.0
 node_mse_weight = 16.0
+node_mae_weight = 9.0
 
 edge_suba_weight = 0.1
 edge_subb_weight = 0.1
 edge_constraint_weight = 0.1
 
-kld_weight = .001
+kld_weight = .1
 reg_weight = .01
 
-GRAPH_EMBEDDING_SIZE = 512
+GRAPH_EMBEDDING_SIZE = 1024
 
 HYPER_PARAMETERS = {
     "graph embedding dimension": GRAPH_EMBEDDING_SIZE,
