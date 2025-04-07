@@ -1,18 +1,12 @@
 # %%
 import os
-from typing import Sequence
 from tqdm import tqdm
-from matplotlib import pyplot as plt
 from torch.utils.tensorboard.writer import SummaryWriter
 # from torch.profiler import profile, record_function, ProfilerActivity
 import torch
-from model3 import GVAE
-from loss import reconstruction_loss, kl_loss
-from dataset1 import SketchDataset
+from constraint_model import ConstraintModel
 from torch.utils.data import DataLoader, Subset, random_split
-os.chdir('SketchGraphs/')
-import sketchgraphs.data as datalib
-os.chdir('../')
+from loss import edge_loss
 
 # %%
 import torch.multiprocessing as mp
@@ -25,36 +19,35 @@ from torch.distributed import init_process_group, destroy_process_group
 class MultiGPUTrainer:
     def __init__(
             self,
-            model: GVAE,
+            model: ConstraintModel,
             train_set: Subset,
             validate_set: Subset,
-            learning_rate: float,
             gpu_id: int,
             num_epochs: int,
             experiment_string: str,
-            batch_size: int
             ):
         model.device = gpu_id
         self.model = DDP(model.to(gpu_id), device_ids=[gpu_id])
         # if os.path.exists(f"best_model_checkpoint.pth"):
         #     map_location = {'cuda:%d' % 0: 'cuda:%d' % gpu_id}
         #     self.model.load_state_dict(torch.load(f"best_model_checkpoint_custom.pth", map_location = map_location))
-
+        self.learning_rate = 1e-4
+        self.batch_size = 512
         self.train_sampler = DistributedSampler(train_set, drop_last = True)
         self.train_loader = DataLoader(dataset = train_set, 
-                                       batch_size = batch_size, 
+                                       batch_size = self.batch_size, 
                                        shuffle = False, 
                                        pin_memory = True, 
                                        sampler = self.train_sampler
                                       )
         self.validate_sampler = DistributedSampler(validate_set)
         self.validate_loader = DataLoader(dataset = validate_set, 
-                                          batch_size = batch_size, 
+                                          batch_size = self.batch_size, 
                                           shuffle = False, 
                                           pin_memory = True, 
                                           sampler = self.validate_sampler
                                          )
-        self.optimizer = torch.optim.Adam(self.model.parameters(), lr = learning_rate)
+        self.optimizer = torch.optim.Adam(self.model.parameters(), lr = self.learning_rate)
         # self.optimizer = ZeroRedundancyOptimizer(self.model.parameters(),
         #                                          optimizer_class = torch.optim.Adam,
         #                                          lr = learning_rate
@@ -69,18 +62,16 @@ class MultiGPUTrainer:
         self.global_step = 0
         self.curr_epoch = 0
         self.min_validation_loss = float('inf')
-
-        # self.record_freq = len(self.train_loader) // 5
-
     
-    def train_batch(self, nodes : torch.Tensor, edges : torch.Tensor, params_mask : torch.Tensor) -> float:
+    def train_batch(self, nodes : torch.Tensor, edges : torch.Tensor) -> float:
         self.optimizer.zero_grad()
 
         nodes = nodes.to(self.gpu_id)
         edges = edges.to(self.gpu_id)
-        params_mask = params_mask.to(self.gpu_id)
 
-        pred_nodes, pred_edges, means, logvars = self.model(nodes, edges)
+        t = torch.ones(nodes.size(0)).int().to(self.gpu_id) * 10
+        nodes = self.model.module.noise_scheduler(nodes, t)
+        pred_edges = self.model(nodes)
 
         # assert pred_nodes.isfinite().all(), "Model output for nodes has non finite values"
         # assert pred_edges.isfinite().all(), "Model output for edges has non finite values"
@@ -88,10 +79,9 @@ class MultiGPUTrainer:
         # assert logvars.isfinite().all(),    "Model output for logvars has non finite values"
 
         loss_dict = {} # dictionary to record loss values 
-        loss = reconstruction_loss(pred_nodes, pred_edges, nodes, edges, params_mask, loss_dict) 
-        loss += kl_loss(means, logvars, loss_dict)
+        loss = edge_loss(pred_edges, edges, loss_dict)
 
-        # assert loss.isfinite().all(), "Loss is non finite value"
+        assert loss.isfinite().all(), "Loss is non finite value"
 
         loss.backward()
         self.optimizer.step()
@@ -104,46 +94,38 @@ class MultiGPUTrainer:
         iters = len(self.train_loader)
         pbar = tqdm(self.train_loader) if self.gpu_id == 0 else self.train_loader
         for idx, targets in enumerate(pbar):
-            nodes, edges, params_mask = targets
+            nodes, edges = targets
             
-            iter_loss_dict = self.train_batch(nodes, edges, params_mask)
+            iter_loss_dict = self.train_batch(nodes, edges)
 
             self.global_step += 1
             # self.scheduler.step(self.curr_epoch + idx / iters)
             # if self.gpu_id == 0: self.writer.add_scalar("Learning Rate", self.scheduler.get_last_lr()[0], self.global_step)
 
-            # if (self.global_step % self.record_freq == 0):
-            if self.gpu_id == 0: self.plot_loss(iter_loss_dict) # self.writer.add_scalar("Training Loss", iter_loss, self.global_step)
+            if (self.global_step % self.record_freq == 0):
+                if self.gpu_id == 0: self.plot_loss(iter_loss_dict) # self.writer.add_scalar("Training Loss", iter_loss, self.global_step)
 
             iter_loss = iter_loss_dict["total loss"]
             if self.gpu_id == 0: pbar.set_description(f"Training Epoch {self.curr_epoch} Iter Loss: {iter_loss}")
     
     def plot_loss(self, loss_dict):
-        self.writer.add_scalar("Training/Total_Loss", loss_dict["total loss"], self.global_step)
-        self.writer.add_scalar("Training/Node_Loss", loss_dict["node loss"], self.global_step)
-        self.writer.add_scalar("Training/Node_BCE", loss_dict["node bce"], self.global_step)
-        self.writer.add_scalar("Training/Node_Cross", loss_dict["node cross"], self.global_step)
-        self.writer.add_scalar("Training/Node_MSE", loss_dict["node mse"], self.global_step)
         self.writer.add_scalar("Training/Edge_Loss", loss_dict["edge loss"], self.global_step)
         self.writer.add_scalar("Training/Edge_sub_a", loss_dict["edge sub_a cross"], self.global_step)
         self.writer.add_scalar("Training/Edge_sub_b", loss_dict["edge sub_b cross"], self.global_step)
         self.writer.add_scalar("Training/Edge_Cross", loss_dict["edge cross"], self.global_step)
-        self.writer.add_scalar("Training/KLD", loss_dict["kld"], self.global_step)
-        #self.writer.add_scalar("Training/Posterior_Collapse_Regularization", loss_dict["postcollapse_reg"], self.global_step)
 
     @torch.no_grad()
     def validate(self):
         # self.validate_sampler.set_epoch(self.curr_epoch)
         pbar = tqdm(self.validate_loader) if self.gpu_id == 0 else self.validate_loader
         total_loss = 0
-        for nodes, edges, params_mask in pbar:
+        for nodes, edges in pbar:
             nodes = nodes.to(self.gpu_id)
             edges = edges.to(self.gpu_id)
-            params_mask = params_mask.to(self.gpu_id)
 
-            pred_nodes, pred_edges, means, logvars = self.model(nodes, edges)
+            pred_edges = self.model(nodes)
 
-            loss = reconstruction_loss(pred_nodes, pred_edges, nodes, edges, params_mask) + kl_loss(means, logvars)
+            loss = edge_loss(pred_edges, edges)
 
             total_loss += loss
 
@@ -152,45 +134,13 @@ class MultiGPUTrainer:
             if self.gpu_id == 0: pbar.set_description(f"Validating Epoch {self.curr_epoch}  ")
         
         avg_loss = total_loss / len(pbar)
+        if self.gpu_id == 0: self.writer.add_scalar("Validation/Loss", avg_loss, self.curr_epoch)
+
         if avg_loss < self.min_validation_loss:
-            self.min_validation_loss = avg_loss
-            if self.gpu_id == 0: 
-                self.writer.add_scalar("Validation/Loss", avg_loss, self.curr_epoch)
+            self.min_validation_loss = avg_loss 
+            if self.gpu_id == 0:
                 self.save_checkpoint()
                 print("---Saved Model Checkpoint---")
-        
-        if self.gpu_id == 0:
-            # Render the actual CAD Sketch
-            fig, axes = plt.subplots(nrows = 4, ncols = 2, figsize=(8, 16))
-            fig.suptitle(f"Target (left) vs Preds (right) for epoch {self.curr_epoch}")
-            for i in range(4):
-                target_sketch = SketchDataset.preds_to_sketch(nodes[i].cpu(), edges[i].cpu())
-                pred_sketch = SketchDataset.preds_to_sketch(pred_nodes[i].cpu(), pred_edges[i].cpu())
-                
-                datalib.render_sketch(target_sketch, axes[i, 0])
-                # SketchDataset.superimpose_constraints(target_sketch, axes[i, 0])
-                datalib.render_sketch(pred_sketch, axes[i, 1])
-                # SketchDataset.superimpose_constraints(pred_sketch, axes[i, 1])
-            
-            self.writer.add_figure(f"Validation/Epoch_Result_Visualization", fig, self.curr_epoch)
-            plt.close()
-
-            # # Render the graph visualization of the Sketch
-            # fig, axes = plt.subplots(nrows = 1, ncols = 2, figsize=(16, 8))
-            # fig.suptitle(f"Target (left) vs Preds (right) for epoch {self.curr_epoch}")
-            # self.visualize_graph(nodes[0].cpu(), edges[0].cpu(), "target_graph")
-            # self.visualize_graph(pred_nodes[0].cpu(), pred_edges[0].cpu(), "pred_graph")
-            # axes[0].imshow(plt.imread("target_graph.png"))
-            # axes[1].imshow(plt.imread("pred_graph.png"))
-            # self.writer.add_figure(f"Validation/Epoch_Graph_Visualization", fig, self.curr_epoch)
-            # plt.close()
-
-    
-    def visualize_graph(self, nodes, edges, filename):
-        sketch = SketchDataset.preds_to_sketch(nodes, edges)
-        seq = datalib.sketch_to_sequence(sketch)
-        graph = datalib.pgvgraph_from_sequence(seq)
-        datalib.render_graph(graph, f"{filename}.png")
 
     def train(self):
         self.global_step = 0
@@ -225,8 +175,6 @@ def train_on_multiple_gpus(rank: int,
                            world_size: int,
                            train_set: Subset,
                            validate_set: Subset,
-                           learning_rate: float,
-                           batch_size: int,
                            num_epochs: int, 
                            experiment_string: str
                           ):
@@ -236,7 +184,7 @@ def train_on_multiple_gpus(rank: int,
     #train_set = Subset(dataset = dataset, indices = train_indices)
     #validate_set = Subset(dataset = dataset, indices = validate_indices)
 
-    model = GVAE(rank)
+    model = ConstraintModel(rank)
     # if os.path.exists(f"best_model_checkpoint.pth"):
     #     model.load_state_dict(torch.load(f"best_model_checkpoint.pth"))
 
@@ -244,11 +192,9 @@ def train_on_multiple_gpus(rank: int,
         model = model,
         train_set = train_set,
         validate_set = validate_set,
-        learning_rate = learning_rate,
         gpu_id = rank,
         num_epochs = num_epochs,
-        experiment_string = experiment_string,
-        batch_size = batch_size
+        experiment_string = experiment_string
     )
 
     trainer.train()

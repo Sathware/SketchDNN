@@ -2,7 +2,9 @@ import torch
 import torch.multiprocessing as mp
 from torch.utils.data import random_split, TensorDataset
 from dataset1 import SketchDataset
-from gumbel_diffusion_trainer import train_on_multiple_gpus # from nodediff_trainer import train_on_multiple_gpus
+# from distributed_trainer import train_on_multiple_gpus
+# from diffusion_trainer import train_on_multiple_gpus 
+from nodediff_trainer import train_on_multiple_gpus
 from torch.utils.tensorboard.writer import SummaryWriter
 # from sharpener_trainer import train_on_multiple_gpus
 from utils import ToCenter, BoundingBoxShiftScale, ToIscosceles
@@ -30,23 +32,24 @@ def main():
     # Add extra arc param mask for isoceles representation
     # params_mask = torch.cat([params_mask[...,:8], params_mask[...,7:]], dim = -1)
 
-    edges = torch.load("data/processed/edges2.pt")
+    # edges = torch.load("data/processed/edges2.pt")
 
-    assert nodes.isfinite().all()
-    assert edges.isfinite().all()
-    assert params_mask.isfinite().all()
+    # assert nodes.isfinite().all()
+    # assert edges.isfinite().all()
+    # assert params_mask.isfinite().all()
     # print(nodes.shape)
     # print(edges.shape)
     # print(params_mask.shape)
 
-    dataset = TensorDataset(nodes, edges, params_mask)
-    train_set, validate_set, test_set = random_split(dataset = dataset, lengths = [0.85, 0.05, 0.1], generator = torch.Generator().manual_seed(4))
+    # dataset = TensorDataset(nodes, edges, params_mask)
+    dataset = TensorDataset(nodes, params_mask)
+    train_set, validate_set, test_set = random_split(dataset = dataset, lengths = [0.9, 0.05, 0.05], generator = torch.Generator().manual_seed(4))
     
-    # batch_size = 192
+    # batch_size = 128
     # learning_rate = 1e-4
-    num_epochs = 1000
-    # experiment_string = "sharpener_ddp_Adam_16tflayers"
-    experiment_string = "softgaussdiff_ddp_adam_24layers_512nodedim_256edgedim_256condim_8heads" # "nodediff_ddp_adam_32layers_1536dim" # "nodediff_ddp_adam_26layers_512inddim_cont"
+    num_epochs = 50000
+    # experiment_string = "gvae_ddp_Adam_12enclayers_12declayers"
+    experiment_string = "nodediff_ddp_adam_nopos_nodropout_32layers_512nodedim_512condim_8heads_2000denoisingsteps" # "nodesoftgaussdiff_ddp_adam_constenf_24layers_512nodedim_256condim_8heads" # "nodediff_ddp_adam_32layers_1536dim" # "nodediff_ddp_adam_26layers_512inddim_cont"
 
     # writer = SummaryWriter(f'runs5/{experiment_string}')
     # nodes, edges, _ = dataset[0]
@@ -59,7 +62,8 @@ def main():
     # mp.spawn(train_on_multiple_gpus,
     #     args=(
     #         world_size, 
-    #         embedding_dataset,
+    #         train_set,
+    #         validate_set,
     #         learning_rate,
     #         batch_size, 
     #         num_epochs, 

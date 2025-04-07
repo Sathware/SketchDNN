@@ -13,3 +13,6 @@ seeds/
 gumbeldiff_overfit_model.pth
 *.png
 cred*
+*.pdf
+*.pth
+*.mp4

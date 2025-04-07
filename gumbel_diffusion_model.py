@@ -7,6 +7,8 @@ from torch.utils.checkpoint import checkpoint
 from config import NODE_FEATURE_DIMENSION, EDGE_FEATURE_DIMENSION, MAX_NUM_PRIMITIVES
 from dataset1 import SketchDataset
 from matplotlib import pyplot as plt
+from utils import ToNaive
+
 
 BINARY_CONSTRUCT_ISOCELES_NODE_DIM = NODE_FEATURE_DIMENSION + 1
 class GD3PM(nn.Module):
@@ -15,12 +17,12 @@ class GD3PM(nn.Module):
     self.device = device
     self.node_dim = BINARY_CONSTRUCT_ISOCELES_NODE_DIM
     self.edge_dim = EDGE_FEATURE_DIMENSION
-    self.node_hidden_dim = 768
+    self.node_hidden_dim = 512
     self.edge_hidden_dim = 256
     self.cond_hidden_dim = 256
     self.num_tf_layers = 24
     self.num_checkpoints = 0
-    self.num_heads = 16
+    self.num_heads = 8
     self.max_timestep = 1000
     self.noise_scheduler = CosineNoiseScheduler(self.max_timestep, self.device)
     self.architecture = DiffusionModel(node_dim = self.node_dim,
@@ -68,12 +70,12 @@ class GD3PM(nn.Module):
       nodes, edges = self.reverse(denoised_nodes, nodes, denoised_edges, edges, t)
 
       if t % stepsize == 0:
-        SketchDataset.render_graph(nodes[0,...,1:].cpu(), edges[0].cpu(), axes[0, j])
-        SketchDataset.render_graph(denoised_nodes[0,...,1:].cpu(), denoised_edges[0].cpu(), axes[1, j])
+        SketchDataset.render_graph(ToNaive(nodes[0,...,1:]).cpu(), edges[0].cpu(), axes[0, j])
+        SketchDataset.render_graph(ToNaive(denoised_nodes[0,...,1:]).cpu(), denoised_edges[0].cpu(), axes[1, j])
         j = j - 1
     
-    SketchDataset.render_graph(nodes[0,...,1:].cpu(), edges[0].cpu(), axes[0, 0])
-    SketchDataset.render_graph(denoised_nodes[0,...,1:].cpu(), denoised_edges[0].cpu(), axes[1, 0])
+    SketchDataset.render_graph(ToNaive(nodes[0,...,1:]).cpu(), edges[0].cpu(), axes[0, 0])
+    SketchDataset.render_graph(ToNaive(denoised_nodes[0,...,1:]).cpu(), denoised_edges[0].cpu(), axes[1, 0])
 
     return nodes, edges
   
@@ -94,16 +96,16 @@ class GD3PM(nn.Module):
     vals, _ = torch.max(pred_nodes[...,2:7], dim = -1, keepdim = True)
     denoised_nodes[...,7:] = self.noise_scheduler.continuous_posterior_step(weights / vals * pred_nodes[...,7:], curr_nodes[...,7:], timestep)
 
-    edges_shape = pred_edges.shape
-    denoised_edges = denoised_edges.view(edges_shape[0], -1, edges_shape[-1]) # Flatten middle
-    pred_edges = pred_edges.view(edges_shape[0], -1, edges_shape[-1])
-    curr_edges = curr_edges.view(edges_shape[0], -1, edges_shape[-1])
+    # edges_shape = pred_edges.shape
+    # denoised_edges = denoised_edges.view(edges_shape[0], -1, edges_shape[-1]) # Flatten middle
+    # pred_edges = pred_edges.view(edges_shape[0], -1, edges_shape[-1])
+    # curr_edges = curr_edges.view(edges_shape[0], -1, edges_shape[-1])
 
     denoised_edges[...,0:4] = self.noise_scheduler.discrete_posterior_step(pred_edges[...,0:4], curr_edges[...,0:4], timestep)
     denoised_edges[...,4:8] = self.noise_scheduler.discrete_posterior_step(pred_edges[...,4:8], curr_edges[...,4:8], timestep)
     denoised_edges[...,8:] = self.noise_scheduler.discrete_posterior_step(pred_edges[...,8:], curr_edges[...,8:], timestep)
     
-    return denoised_nodes, denoised_edges.view(edges_shape) # Reshape to edge shape
+    return denoised_nodes, denoised_edges # .view(edges_shape) # Reshape to edge shape
 
 class DiffusionModel(nn.Module):
     def __init__(self, node_dim, edge_dim, node_hidden_dim, edge_hidden_dim, cond_hidden_dim, num_heads, num_tf_layers, num_checkpoints, max_timestep, device: device):
@@ -148,13 +150,28 @@ class DiffusionModel(nn.Module):
         
         # Normalization
         self.norm = Normalization(node_dim = node_hidden_dim, device = device)
+        self.lin_cond = nn.Linear(in_features = cond_hidden_dim, out_features = 2 * node_hidden_dim, device = device)
+        nn.init.zeros_(self.lin_cond.weight)
+        nn.init.zeros_(self.lin_cond.bias)
         
         # Output MLP layers
-        self.lin_out_nodes = nn.Sequential(
+        self.lin_out_params = nn.Sequential(
             # nn.Linear(in_features = node_hidden_dim, out_features = node_hidden_dim, device = device),
             # nn.SiLU(),
-            Normalization(node_dim = node_hidden_dim, device = device),
-            nn.Linear(in_features = node_hidden_dim, out_features = node_dim - 1, device = device)
+            # Normalization(node_dim = node_hidden_dim, device = device),
+            nn.Linear(in_features = node_hidden_dim, out_features = 14, device = device)
+        )
+        self.lin_out_types = nn.Sequential(
+            # nn.Linear(in_features = node_hidden_dim, out_features = node_hidden_dim, device = device),
+            # nn.SiLU(),
+            # Normalization(node_dim = node_hidden_dim, device = device),
+            nn.Linear(in_features = node_hidden_dim, out_features = 5, device = device)
+        )
+        self.lin_out_bool = nn.Sequential(
+            # nn.Linear(in_features = node_hidden_dim, out_features = node_hidden_dim, device = device),
+            # nn.SiLU(),
+            # Normalization(node_dim = node_hidden_dim, device = device),
+            nn.Linear(in_features = node_hidden_dim, out_features = 1, device = device)
         )
 
         self.lin_out_edges = nn.Sequential(
@@ -162,21 +179,23 @@ class DiffusionModel(nn.Module):
             # nn.Linear(in_features = node_hidden_dim, out_features = node_hidden_dim, device = device),
             # nn.SiLU(),
             # nn.SiLU(),
-            Normalization(node_dim = edge_hidden_dim, device = device),
+            Normalization(node_dim = edge_hidden_dim, device = device, affine = True),
             nn.Linear(in_features = edge_hidden_dim, out_features = edge_dim, device = device)
         )
 
     def forward(self, nodes : Tensor, edges : Tensor, timestep : Tensor):
         nodes = self.mlp_in_nodes(nodes)     # shape: (batch_size, num_nodes, node_hidden_dim)
         edges = self.mlp_in_edges(edges)
-        conds = self.time_embedder(timestep).unsqueeze(1) + self.pos_embedder.weight.unsqueeze(0)
+        conds = F.silu(self.time_embedder(timestep).unsqueeze(1) + self.pos_embedder.weight.unsqueeze(0))
 
         checkpoints = self.num_checkpoints
         for layer in self.block_layers:
             nodes, edges = checkpoint(layer, nodes, edges, conds, use_reentrant = False) if checkpoints > 1 else layer(nodes, edges, conds) # shape: (batch_size, num_nodes, node_hidden_dim) ; shape: (batch_size, num_nodes, num_nodes, edge_hidden_dim)
             checkpoints = checkpoints - 1
 
-        nodes = torch.cat([torch.zeros_like(nodes[...,[0]]), self.lin_out_nodes(nodes)], dim = -1) # shape: (batch_size, num_nodes, node_dim)
+        shift, scale = self.lin_cond(conds).chunk(chunks = 2, dim = -1)
+        nodes = self.norm(nodes) * (1 + scale) + shift
+        nodes = torch.cat([torch.zeros_like(nodes[...,[0]]), self.lin_out_bool(nodes), self.lin_out_types(nodes), self.lin_out_params(nodes)], dim = -1) # shape: (batch_size, num_nodes, node_dim)
         edges = self.lin_out_edges(edges)
 
         return nodes, edges
@@ -200,9 +219,9 @@ class TransformerLayer(nn.Module):
 
         # Node and edge MLPs
         self.mlp_nodes = nn.Sequential(
-            nn.Linear(in_features = node_dim, out_features = node_dim, device = device),
+            nn.Linear(in_features = node_dim, out_features = 4 * node_dim, device = device),
             nn.SiLU(),
-            nn.Linear(in_features = node_dim, out_features = node_dim, device = device),
+            nn.Linear(in_features = 4 * node_dim, out_features = node_dim, device = device),
             # nn.SiLU()
         )
 
@@ -214,9 +233,9 @@ class TransformerLayer(nn.Module):
         )
 
         # Conditioning
-        self.lin_cond_node = nn.Linear(in_features = cond_dim, out_features = 4 * node_dim, device = device)
-        nn.init.zeros_(self.lin_cond_node.weight)
-        nn.init.zeros_(self.lin_cond_node.bias)
+        self.lin_cond = nn.Linear(in_features = cond_dim, out_features = 4 * node_dim, device = device)
+        nn.init.zeros_(self.lin_cond.weight)
+        nn.init.zeros_(self.lin_cond.bias)
         # self.lin_cond_edge = nn.Linear(in_features = cond_dim, out_features = 4 * edge_dim, device = device)
         # nn.init.zeros_(self.lin_cond_edge.weight)
         # nn.init.zeros_(self.lin_cond_edge.bias)
@@ -224,7 +243,7 @@ class TransformerLayer(nn.Module):
         self.lin_cond_node_edge = nn.Linear(in_features = node_dim, out_features = edge_dim, device = device)
 
     def forward(self, nodes : Tensor, edges : Tensor, conds : Tensor) -> Tensor:
-        mul_in_node, add_in_node, mul_attn_node, add_attn_node = self.lin_cond_node(F.silu(conds)).chunk(chunks = 4, dim = -1)
+        mul_in_node, add_in_node, mul_attn_node, add_attn_node = self.lin_cond(conds).chunk(chunks = 4, dim = -1)
         # mul_in_edge, add_in_edge, mul_attn_edge, add_attn_edge = self.lin_cond_edge(conds.unsqueeze(1).unsqueeze(1)).chunk(chunks = 4, dim = -1)
         # Attention
         # deltanodes, deltaedges = self.attention_heads(F.silu(self.norm_node_in(nodes) * (1 + mul_in_node) + add_in_node),
@@ -250,10 +269,10 @@ class MultiHeadNodeAttention(nn.Module):
         self.num_heads = num_heads
         attn_dim = node_dim // num_heads # 64
 
-        self.lin_qkv = nn.Linear(in_features = self.node_dim, out_features = 3 * attn_dim * num_heads, device = device)
-        self.lin_bias = nn.Linear(in_features = edge_dim, out_features = num_heads, device = device)
+        self.lin_qkv = nn.Linear(in_features = self.node_dim, out_features = 3 * node_dim, device = device)
+        # self.lin_bias = nn.Linear(in_features = edge_dim, out_features = num_heads, device = device)
 
-        self.lin_nodes_out = nn.Linear(in_features = attn_dim * num_heads, out_features = self.node_dim, device = device)            
+        self.lin_nodes_out = nn.Linear(in_features = node_dim, out_features = self.node_dim, device = device)            
 
     def forward(self, nodes : Tensor, edges : Tensor) -> Tensor:
         batch_size, num_nodes, _ = nodes.size()
@@ -264,10 +283,10 @@ class MultiHeadNodeAttention(nn.Module):
         keys = keys.reshape(batch_size, num_nodes, self.num_heads, -1).permute(0, 2, 1, 3)       # batch_size x num_heads x num_nodes x attn_dim
         values = values.reshape(batch_size, num_nodes, self.num_heads, -1).permute(0, 2, 1, 3)   # batch_size x num_heads x num_nodes x attn_dim
 
-        attn_bias = self.lin_bias(edges).permute(0, 3, 1, 2)
+        # attn_bias = self.lin_bias(edges).permute(0, 3, 1, 2)
         # attn_mask = ~torch.eye(queries.size(-2), dtype = torch.bool, device = queries.device)
 
-        weighted_values = F.scaled_dot_product_attention(query = queries, key = keys, value = values, attn_mask = attn_bias).permute(0, 2, 1, 3).flatten(start_dim = 2)
+        weighted_values = F.scaled_dot_product_attention(query = queries, key = keys, value = values).permute(0, 2, 1, 3).flatten(start_dim = 2)
 
         return self.lin_nodes_out(weighted_values)
 
@@ -305,12 +324,12 @@ class MultiHeadAttention(nn.Module):
         return self.lin_nodes_out(weighted_values), self.lin_edges_out(F.silu(edges))
 
 class Normalization(nn.Module):
-    def __init__(self, node_dim: int, device: device):
+    def __init__(self, node_dim: int, device: device, affine = False):
         super().__init__()
         
         # self.norm_nodes = nn.InstanceNorm1d(num_features = node_dim, device = device)
         # self.norm_nodes = nn.BatchNorm1d(num_features = node_dim, affine = False, device = device)
-        self.norm_nodes = nn.LayerNorm(normalized_shape = node_dim, elementwise_affine = False, device = device)
+        self.norm_nodes = nn.LayerNorm(normalized_shape = node_dim, elementwise_affine = affine, device = device)
 
     def forward(self, nodes : Tensor) -> Tensor:
         # return self.norm_nodes(nodes.permute(0, 2, 1)).permute(0, 2, 1)
@@ -348,11 +367,7 @@ class CosineNoiseScheduler(nn.Module):
     # self.a_bar = self.a_bar.clamp(min = 0.0001, max = 0.9999)
     self.a_bar = torch.cos(t * 0.5 * math.pi) ** 2 # 1 - torch.linspace(0, 1, self.max_timestep + 1, device = device) ** 2
     self.a_bar = self.a_bar.clamp(min = 0.0001, max = 0.9999)
-
-    # Discrete variance schedule
-    self.clamp_min = -10
-    s = 16
-    self.da_bar = (1-t) * (1 - t ** (1/s)) + (t) * (torch.exp(t * -s))
+    self.min_k = self.a_bar[9] # Minimum Noise to make onehot vectors into near onehot
   
   def forward(self, nodes : Tensor, edges : Tensor, timestep : Tensor):
     ''' Apply noise to graph '''
@@ -366,9 +381,9 @@ class CosineNoiseScheduler(nn.Module):
     # Primitive parameters noise
     noisy_nodes[...,7:] = self.apply_continuous_noise(nodes[...,7:], timestep)
     
-    edges_shape = edges.shape
-    noisy_edges = noisy_edges.view(edges_shape[0], -1, edges_shape[-1])
-    edges = edges.view(edges_shape[0], -1, edges_shape[-1])
+    # edges_shape = edges.shape
+    # noisy_edges = noisy_edges.view(edges_shape[0], -1, edges_shape[-1])
+    # edges = edges.view(edges_shape[0], -1, edges_shape[-1])
 
     # Sub A noise
     noisy_edges[...,0:4] = self.apply_discrete_noise(edges[...,0:4], timestep)
@@ -377,7 +392,7 @@ class CosineNoiseScheduler(nn.Module):
     # Constraint noise
     noisy_edges[...,8:] = self.apply_discrete_noise(edges[...,8:], timestep)
     
-    return noisy_nodes, noisy_edges.view(edges_shape)
+    return noisy_nodes, noisy_edges #.view(edges_shape)
   
   def sample_latent(self, batch_size : int) -> Tensor:
     noisy_nodes = torch.zeros(size = (batch_size, MAX_NUM_PRIMITIVES, BINARY_CONSTRUCT_ISOCELES_NODE_DIM), device = self.device)
@@ -443,12 +458,17 @@ class CosineNoiseScheduler(nn.Module):
       assert timestep > 0
       assert timestep < self.max_timestep
       timestep = [timestep]
-      
-    a = torch.sqrt(self.da_bar[timestep, None, None])
-    b = torch.sqrt(1 - self.da_bar[timestep, None, None])
+    
+    da_bar = self.continous_variance_to_discrete_variance(self.a_bar[timestep, None, None], params.size(-1))
+    if params.dim() > 3: da_bar = da_bar.unsqueeze(-1) # For edges
+
+    a = torch.sqrt(da_bar)
+    b = torch.sqrt(1 - da_bar)
+
+    params = self.min_k * params + (1 - self.min_k) / params.size(-1)
 
     noise = torch.randn_like(params)
-    return torch.softmax(a * params.log().clamp(self.clamp_min) + b * noise, dim = -1) #, noise
+    return torch.softmax(a * params.log() + b * noise, dim = -1) #, noise
   
   def discrete_posterior_step(self, pred_params : Tensor, curr_params : Tensor, timestep : Tensor | int) -> Tensor:
     if type(timestep) is int:
@@ -458,21 +478,27 @@ class CosineNoiseScheduler(nn.Module):
       assert timestep < self.max_timestep
       timestep = torch.tensor(data = [timestep], device = pred_params.device)
 
-    curr_a = self.da_bar[timestep] / self.da_bar[timestep - 1]
+    curr_a_bar = self.continous_variance_to_discrete_variance(self.a_bar[timestep], pred_params.size(-1))
+    prev_a_bar = self.continous_variance_to_discrete_variance(self.a_bar[timestep - 1], pred_params.size(-1))
+    curr_a = curr_a_bar / prev_a_bar
     curr_b = 1 - curr_a
-    curr_a_bar = self.da_bar[timestep]
     curr_b_bar = 1 - curr_a_bar
-    prev_a_bar = self.da_bar[timestep - 1]
     prev_b_bar = 1 - prev_a_bar
 
     if timestep > 1:
-      log_pred = 2 * pred_params.log()
-      log_curr = curr_params.log().clamp(self.clamp_min)
+      log_pred = pred_params.log() * 2
+      log_curr = curr_params.log()
       mean = (prev_a_bar.sqrt() * curr_b * log_pred + curr_a.sqrt() * prev_b_bar * log_curr) / curr_b_bar
       noise = torch.randn_like(pred_params)
       return torch.softmax(mean + torch.sqrt(prev_b_bar / curr_b_bar * curr_b) * noise, dim = -1) #, noise
     else:
       return pred_params
+    
+  def continous_variance_to_discrete_variance(self, a : Tensor, D : int):
+    n = torch.log((1 - a) / ((D - 1) * a + 1)) ** 2
+    m = torch.log((1 - self.min_k) / ((D - 1) * self.min_k + 1)) ** 2
+
+    return n / (n + m)
 
 '''----- Soft Gumb -----'''
 # class CosineNoiseScheduler(nn.Module):

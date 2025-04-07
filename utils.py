@@ -116,7 +116,7 @@ def GetUniqueIndices(tensor, num_levels):
     # Step 4: Round to the nearest quantization level
     tensor_quantized = torch.round(tensor_scaled).to(dtype=torch.int32)
 
-    _, inverse_indices, counts = torch.unique(input = tensor_quantized, return_inverse = True, return_counts = True, sorted = False, dim = 0)
+    _, inverse_indices, counts = torch.unique(input = tensor_quantized, return_inverse = True, return_counts = True, sorted = False, dim = 0) # Gives which index each tensor maps to, duplicate tensors map to the same index in unsorted
 
     _, permutation_sort = torch.sort(inverse_indices, stable=True) # permutation_sort is the permutation of indices to make the input sorted
     cum_sum = counts.cumsum(0) # End position of each group of duplicates

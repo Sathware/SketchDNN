@@ -10,7 +10,7 @@ from torch.utils.tensorboard.writer import SummaryWriter
 import torch
 import torch.nn.functional as F
 from torch import Tensor
-from diffusion_model3 import GD3PM
+from gumbel_diffusion_model import GD3PM
 # from loss import diffusion_loss
 from dataset1 import SketchDataset
 from torch.utils.data import DataLoader, Subset, random_split
@@ -44,18 +44,25 @@ class MultiGPUTrainer:
             # batch_size: int
             ):
         model.device = gpu_id
+        if os.path.exists(f"checkpoint_nodesoftgaussdiff_ddp_adam_32layers_512nodedim_512condim_16heads.pth"):
+            map_location = {'cuda:%d' % 0: 'cuda:%d' % gpu_id}
+            checkpoint = torch.load(f"checkpoint_nodesoftgaussdiff_ddp_adam_32layers_512nodedim_512condim_16heads.pth", map_location = map_location)
+            # Create a new OrderedDict without the 'module.' prefix
+            from collections import OrderedDict
+            new_state_dict = OrderedDict()
+            for k, v in checkpoint["model"].items():
+                name = k[7:]  # Remove 'module.'
+                new_state_dict[name] = v
+            model.load_state_dict(new_state_dict, strict = False)
+            # self.optimizer.load_state_dict(checkpoint["optimizer"])
+
+            for name, p in model.named_parameters():
+                if "edge" not in name:
+                    p.requires_grad = False
+
         self.model = DDP(model.to(gpu_id), device_ids=[gpu_id])
         self.learning_rate = 1e-4
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr = self.learning_rate)
-        # if os.path.exists(f"checkpoint_softgaussdiff_ddp_adam_32layers_512nodedim_512edgedim_512condim.pth"):
-        #     map_location = {'cuda:%d' % 0: 'cuda:%d' % gpu_id}
-        #     checkpoint = torch.load(f"checkpoint_softgaussdiff_ddp_adam_32layers_512nodedim_512edgedim_512condim.pth", map_location = map_location)
-        #     self.model.load_state_dict(checkpoint["model"], strict=False)
-        #     self.optimizer.load_state_dict(checkpoint["optimizer"])
-
-        #     # for name, p in model.named_parameters():
-        #     #     if "edge" not in name:
-        #     #         p.requires_grad = False
 
         # decay = 0.9999
         # self.ema_model = torch.optim.swa_utils.AveragedModel(self.model.module, device = gpu_id, multi_avg_fn=torch.optim.swa_utils.get_ema_multi_avg_fn(decay))
@@ -127,7 +134,7 @@ class MultiGPUTrainer:
         scales = torch.clamp(a_bar_t / (1 - a_bar_t), max = 16).unsqueeze(1).unsqueeze(1)
         # scales = torch.where(t <= (self.model.module.max_timestep / 5), 4, 1)
         # scales = scales.unsqueeze(1).unsqueeze(1)
-        loss = self.diffusion_loss(pred_nodes, nodes, pred_edges, edges, params_mask, loss_dict)
+        loss = self.diffusion_loss(pred_nodes, nodes, pred_edges, edges, params_mask, loss_dict, scales)
         assert loss.isfinite().all(), "NaN was generated in loss calculation!"
 
         loss.backward()

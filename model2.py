@@ -6,7 +6,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 from torch.utils.checkpoint import checkpoint
-from config import NODE_FEATURE_DIMENSION, EDGE_FEATURE_DIMENSION, MAX_NUM_PRIMITIVES, GRAPH_EMBEDDING_SIZE
+from config import NODE_FEATURE_DIMENSION, EDGE_FEATURE_DIMENSION, GRAPH_EMBEDDING_SIZE #, MAX_NUM_PRIMITIVES
+MAX_NUM_PRIMITIVES = 24
 # %%
 class GVAE(nn.Module):
     def __init__(self, device : torch.device):
